@@ -58,7 +58,8 @@ const state = {
   ping: 0,
   fps: 0,
   time: 0,
-  aim: 0
+  aim: 0,
+  hurtFlash: 0
 };
 
 let renderer = null;
@@ -244,7 +245,7 @@ function applySnapshot(msg) {
   }
 
   if (prevYou) {
-    if (you.hp < prevYou.hp - 0.5 && you.al) sfx.hurt();
+    if (you.hp < prevYou.hp - 0.5 && you.al) { sfx.hurt(); state.hurtFlash = 0.25; }
     if (prevYou.al && !you.al) { sfx.die(); renderer && renderer.shake(14); }
   }
 
@@ -362,6 +363,7 @@ function frame(now) {
 
   fpsAcc += dt; fpsCount++;
   if (fpsAcc >= 0.5) { state.fps = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
+  state.hurtFlash = Math.max(0, state.hurtFlash - dt);
 
   const inCar = !!state.localCar;
   state.aim = computeAim();
@@ -422,7 +424,7 @@ function drawFrame(dt, now) {
   const focus = state.localCar || state.local;
   const speed = Math.hypot(focus.vx || 0, focus.vy || 0);
 
-  renderer.updateCamera({ x: focus.x, y: focus.y, angle: focus.angle }, speed, dt);
+  renderer.updateCamera({ x: focus.x, y: focus.y, angle: focus.angle }, speed, dt, !state.localCar);
   renderer.updateEffects(dt);
   renderer.begin(dt);
   renderer.drawCity();
@@ -438,7 +440,7 @@ function drawFrame(dt, now) {
     } else if (e.type === E_PLAYER) {
       const meta = state.rosterById.get(e.id);
       renderer.drawPlayer(
-        { x: s.x, y: s.y, angle: s.a, color: meta ? meta.color : '#fff' },
+        { x: s.x, y: s.y, angle: s.a, id: e.id, color: meta ? meta.color : '#fff' },
         { name: meta ? meta.name : 'Spieler', hit: e.hit, weapon: e.weapon, wanted: meta ? meta.wanted : 0 }
       );
     } else if (e.type === E_CAR) {
@@ -472,9 +474,14 @@ function drawFrame(dt, now) {
   // own player on foot (predicted)
   if (state.you && state.you.al && !state.localCar) {
     const meta = state.rosterById.get(state.me);
+    // The torso follows where we walk, the arms and head follow where we aim.
     renderer.drawPlayer(
-      { x: state.local.x, y: state.local.y, angle: state.aim, color: meta ? meta.color : '#ffd23f' },
-      { weapon: state.you.w, hit: false }
+      {
+        x: state.local.x, y: state.local.y,
+        angle: state.aim, bodyAngle: state.local.angle,
+        id: state.me, color: meta ? meta.color : '#ffd23f'
+      },
+      { weapon: state.you.w, hit: state.you.hp < 100 && state.hurtFlash > 0 }
     );
   }
 

@@ -67,6 +67,15 @@ rastet leicht auf nahe Gegner ein. Am Desktop wird mit der Maus gezielt.
   Gehwegen, Parks, Wasserflächen und Zebrastreifen – prozedural aus einem Seed erzeugt,
   den alle Clients vom Server bekommen. Jeder Serverstart erzeugt eine neue Stadt
   (fixierbar über `SEED=…`).
+* **Figuren:** Jede Person wird aus einzelnen Teilen gezeichnet – Hut mit Krempe und
+  Hutband in der Spielerfarbe, Kopf mit Nase (zeigt die Blickrichtung), Schultern, Torso,
+  Arme, Hände, Beine und Schuhe. Die Beine laufen in einem echten Schrittzyklus, dessen
+  Tempo aus der tatsächlich zurückgelegten Strecke kommt; der Oberkörper dreht sich in
+  Laufrichtung, Arme und Kopf zur Zielrichtung. In der Hand liegt sichtbar die aktuelle
+  Waffe (Pistole, Uzi mit Magazin, Schrotflinte mit Holzschaft, Raketenwerfer mit Visier).
+  Passanten bekommen aus ihrer ID deterministisch Hemd-, Hosen-, Haar- und Hautfarbe sowie
+  in etwa jedem dritten Fall einen Hut – auf allen Clients identisch, ohne ein einziges
+  zusätzliches Byte im Netzwerk.
 * **Fahrzeuge:** 7 Typen (Limousine, Taxi, Sportwagen, Transporter, Truck, Streifenwagen,
   Käfer) mit eigenem Fahrverhalten, Grip, Tempo und Schadensmodell. Autos parken am
   Straßenrand, fahren im Verkehr mit oder werden von der Polizei gefahren.
@@ -110,6 +119,11 @@ Spieler). Clients senden 30-mal pro Sekunde ihre Eingaben, sagen die eigene Bewe
 derselben Physik lokal voraus (Client-Side Prediction mit weicher Korrektur) und
 interpolieren alle anderen Objekte mit 110 ms Puffer – dadurch bleibt die Steuerung auch
 bei Latenz direkt und die Bewegung anderer Spieler flüssig.
+
+**Kamera:** Zu Fuß zoomt die Kamera näher heran (ca. 12,5 Kacheln Höhe), damit die Figuren
+mit Hut, Armen und Beinen zu erkennen sind; im Auto zieht sie auf ca. 16,5 Kacheln auf und
+mit steigendem Tempo zusätzlich zurück, damit bei Höchstgeschwindigkeit genug Vorausschau
+bleibt.
 
 **Warum kein Bild-Asset?** Stadt, Autos, Figuren und Effekte werden zur Laufzeit gezeichnet.
 Das Spiel ist damit wenige hundert Kilobyte groß, startet sofort und skaliert scharf auf

@@ -280,6 +280,7 @@ function buildEntityMap() {
 let lastFrame = performance.now();
 let acc = 0;
 let fpsAcc = 0, fpsCount = 0;
+let hurtFlash = 0;
 
 function frame(now) {
   if (!running || paused) return;
@@ -306,7 +307,8 @@ function frame(now) {
   acc += dt;
   let steps = 0;
   while (acc >= SIM_DT && steps < 5) { world.step(SIM_DT); acc -= SIM_DT; steps++; }
-  if (player.hp < prevHp - 0.5 && player.alive) sfx.hurt();
+  hurtFlash = Math.max(0, hurtFlash - dt);
+  if (player.hp < prevHp - 0.5 && player.alive) { sfx.hurt(); hurtFlash = 0.25; }
 
   consumeEvents();
   buildEntityMap();
@@ -332,25 +334,38 @@ function draw(dt, aim, inp) {
     renderer.addSkid(bx - Math.cos(side) * 11, by - Math.sin(side) * 11, car.angle);
   }
 
-  renderer.updateCamera({ x: focus.x, y: focus.y, angle: focus.angle }, speed, dt);
+  renderer.updateCamera({ x: focus.x, y: focus.y, angle: focus.angle }, speed, dt, !car);
   renderer.updateEffects(dt);
   renderer.begin(dt);
   renderer.drawCity();
 
+  // The whole city is simulated locally, so cull to the visible area before
+  // drawing – on a phone that is the difference between 60 and 30 fps.
+  const b = renderer.viewBounds(70);
+  const visible = (e) => e.x > b.x0 && e.x < b.x1 && e.y > b.y0 && e.y < b.y1;
+
   for (const pu of world.pickups.values()) {
-    if (pu.active) renderer.drawPickup(pu, state.time);
+    if (pu.active && visible(pu)) renderer.drawPickup(pu, state.time);
   }
-  for (const ped of world.peds.values()) renderer.drawPed(ped);
+  for (const ped of world.peds.values()) {
+    if (visible(ped)) renderer.drawPed(ped);
+  }
   for (const c of world.cars.values()) {
+    if (!visible(c)) continue;
     renderer.drawCar({
       x: c.x, y: c.y, kind: c.kind, colorSeed: c.colorSeed, siren: c.siren,
       hpPct: (c.hp / c.maxHp) * 100, braking: c.driver === ME && inp.brake
     }, c.angle);
   }
   if (player.alive && !car) {
+    // The torso follows where we walk, the arms and head follow where we aim.
     renderer.drawPlayer(
-      { x: player.x, y: player.y, angle: aim, color: state.rosterById.get(ME).color },
-      { weapon: player.weapon }
+      {
+        x: player.x, y: player.y,
+        angle: aim, bodyAngle: player.angle,
+        id: ME, color: state.rosterById.get(ME).color
+      },
+      { weapon: player.weapon, hit: hurtFlash > 0 }
     );
   }
 

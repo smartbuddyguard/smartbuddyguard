@@ -38,6 +38,8 @@ export class Renderer {
     this.shakeTime = 0;
     this.shakeMag = 0;
     this.labels = [];
+    this.gait = new Map();   // walk cycle phase per character
+    this.frameNo = 0;
     this.minimap = this.buildMinimap();
   }
 
@@ -53,8 +55,10 @@ export class Renderer {
 
   // ------------------------------------------------------------------ camera
 
-  updateCamera(target, speed, dt) {
-    const base = Math.min(this.w, this.h) / (16 * TILE);
+  updateCamera(target, speed, dt, onFoot) {
+    // On foot the camera sits closer so the characters read; in a car it pulls
+    // back so there is room to react at speed.
+    const base = Math.min(this.w, this.h) / ((onFoot ? 12.5 : 16.5) * TILE);
     const zoom = base * clamp(1.06 - speed / 2600, 0.74, 1.06);
     this.cam.scale = lerp(this.cam.scale || zoom, zoom, clamp(dt * 2.2, 0, 1));
     const lead = clamp(speed / 6, 0, 90);
@@ -86,6 +90,8 @@ export class Renderer {
   begin(dt) {
     const ctx = this.ctx;
     this.labels.length = 0;
+    this.frameNo++;
+    if ((this.frameNo & 255) === 0) this.pruneGait();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = '#14161c';
     ctx.fillRect(0, 0, this.w, this.h);
@@ -299,45 +305,211 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawPed(p) {
+  // ---------------------------------------------------------- characters
+
+  // Every character is built from the same parts: legs that swing with the
+  // walk cycle, a torso that follows the direction of travel, arms that follow
+  // the aim, a head, a hat and whatever is in their hands.
+  drawCharacter(o) {
     const ctx = this.ctx;
-    const shirt = pedColor(p.id);
+    const jacket = o.hit ? '#ff7a68' : o.jacket;
+    const sleeve = shiftColor(jacket, -22);
+    const shoulder = shiftColor(jacket, 16);
+    const stride = Math.sin(o.phase) * (o.moving ? 1 : 0.12);
+
     ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.angle);
-    ctx.fillStyle = 'rgba(0,0,0,.3)';
-    ctx.beginPath(); ctx.arc(1.5, 2, 8, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = shirt;
-    ctx.beginPath(); ctx.arc(0, 0, 7.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e6c8a0';
-    ctx.beginPath(); ctx.arc(2.5, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.translate(o.x, o.y);
+    if (o.scale && o.scale !== 1) ctx.scale(o.scale, o.scale);
+
+    // The shadow stays put no matter which way the character turns.
+    ctx.fillStyle = 'rgba(0,0,0,.22)';
+    ctx.beginPath();
+    ctx.ellipse(1.2, 2.2, 7.6, 6.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // --- lower body: legs and torso follow the direction of travel.
+    // Seen from above the legs sit under the torso, so it is the stride that
+    // makes a foot swing out past the silhouette - one foot at a time, which
+    // is exactly how a walk cycle reads from this angle.
+    ctx.save();
+    ctx.rotate(o.body);
+    // The legs sit slightly wider than the torso, so they stay visible from
+    // above, and the stride swings one shoe past the torso at a time.
+    for (const side of [-1, 1]) {
+      const off = side * 5.8;
+      const step = stride * 5.4 * side;
+      this.limb(-4, off, 3.6 + step, off, 4.6, o.trousers, 'rgba(0,0,0,.45)');
+      ctx.save();
+      ctx.translate(4.8 + step, off);
+      ctx.fillStyle = o.shoes;
+      this.roundRect(-2.5, -2.2, 5.2, 4.4, 1.8);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.fillStyle = jacket;                          // torso, narrower than the stance
+    this.roundRect(-5.4, -5.2, 10.8, 10.4, 4.2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.45)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.fillStyle = shiftColor(jacket, -30);         // shaded back
+    this.roundRect(-5.2, -4.4, 2.8, 8.8, 2.2);
+    ctx.fill();
+    ctx.restore();
+
+    // --- upper body: arms, weapon, head and hat follow the aim
+    ctx.save();
+    ctx.rotate(o.aim);
+    for (const side of [-1, 1]) {                    // shoulders
+      ctx.fillStyle = shoulder;
+      ctx.beginPath();
+      ctx.arc(0.2, side * 4.8, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const armSwing = stride * 3.8;
+    const hands = o.weapon > 0
+      ? [[9.8, -2.4], [8.4, 3.0]]                    // both hands on the weapon
+      : [[5.4 + armSwing, -6.6], [5.4 - armSwing, 6.6]];
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      this.limb(0.4, side * 4.8, hands[i][0], hands[i][1], 3.9, sleeve, 'rgba(0,0,0,.32)');
+    }
+    if (o.weapon > 0) this.drawHeldWeapon(o.weapon);
+    ctx.fillStyle = o.skin;
+    for (const h of hands) {
+      ctx.beginPath();
+      ctx.arc(h[0], h[1], 2.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = o.skin;                          // head
+    ctx.beginPath();
+    ctx.arc(1.2, 0, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    ctx.beginPath();                                 // nose: keeps facing readable
+    ctx.moveTo(4.3, -1.4); ctx.lineTo(6.5, 0); ctx.lineTo(4.3, 1.4);
+    ctx.closePath();
+    ctx.fill();
+
+    if (o.hat) {
+      ctx.fillStyle = o.hatBrim;                     // brim, worn back so the face shows
+      ctx.beginPath();
+      ctx.ellipse(-1.8, 0, 4.7, 4.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.4)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.fillStyle = o.hat;                         // crown
+      ctx.beginPath();
+      ctx.arc(-1.1, 0, 3.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = o.hatBand || 'rgba(0,0,0,.25)'; // band – the player's colour, seen from above
+      ctx.fillRect(-4, -3.1, 1.7, 6.2);
+    } else if (o.hair) {
+      ctx.fillStyle = o.hair;                        // bare head: hair from above
+      ctx.beginPath();
+      ctx.ellipse(-0.6, 0, 3.7, 3.9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
     ctx.restore();
   }
 
-  drawPlayer(p, opts = {}) {
+  // A rounded capsule from a to b – used for arms and legs.
+  limb(ax, ay, bx, by, w, color, stroke) {
     const ctx = this.ctx;
+    const len = Math.hypot(bx - ax, by - ay);
     ctx.save();
-    ctx.translate(p.x, p.y);
-
-    ctx.fillStyle = 'rgba(0,0,0,.35)';
-    ctx.beginPath(); ctx.arc(2, 3, 10, 0, Math.PI * 2); ctx.fill();
-
-    ctx.rotate(p.angle);
-    // body
-    ctx.fillStyle = opts.hit ? '#ff6b5b' : (p.color || '#ffd23f');
-    ctx.beginPath(); ctx.arc(0, 0, 9.5, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,.5)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // head
-    ctx.fillStyle = '#e8cba4';
-    ctx.beginPath(); ctx.arc(3, 0, 4.5, 0, Math.PI * 2); ctx.fill();
-    // weapon
-    if (opts.weapon > 0) {
-      ctx.fillStyle = '#2b2f38';
-      ctx.fillRect(4, -2.5, 13, 4);
+    ctx.translate(ax, ay);
+    ctx.rotate(Math.atan2(by - ay, bx - ax));
+    ctx.fillStyle = color;
+    this.roundRect(-w * 0.5, -w * 0.5, len + w, w, w * 0.5);
+    ctx.fill();
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
     }
     ctx.restore();
+  }
+
+  drawHeldWeapon(kind) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#22262f';
+    switch (kind) {
+      case 1: // pistol: slide plus grip
+        this.roundRect(8, -1.4, 8, 2.8, 1); ctx.fill();
+        this.roundRect(8.3, 0.7, 2.7, 3.6, 1); ctx.fill();
+        break;
+      case 2: // uzi: short barrel, magazine hanging down
+        this.roundRect(7.4, -1.6, 10.6, 3.2, 1.2); ctx.fill();
+        ctx.fillStyle = '#151920';
+        this.roundRect(10.4, 1.2, 2.6, 5, 1); ctx.fill();
+        break;
+      case 3: // shotgun: long barrel with a wooden stock
+        this.roundRect(6, -1.7, 16, 3.4, 1.2); ctx.fill();
+        ctx.fillStyle = '#6b4a2c';
+        this.roundRect(4, -1.7, 5.5, 3.4, 1.2); ctx.fill();
+        break;
+      case 4: // rocket launcher: tube, sight and a warhead tip
+        this.roundRect(4, -2.6, 19, 5.2, 2.4); ctx.fill();
+        this.roundRect(8.6, -4.8, 3.4, 3.2, 1); ctx.fill();
+        ctx.fillStyle = '#ff5f4d';
+        ctx.beginPath(); ctx.arc(22.6, 0, 2.2, 0, Math.PI * 2); ctx.fill();
+        break;
+    }
+  }
+
+  // The walk cycle is driven by the distance actually covered since the last
+  // frame, so predicted, interpolated and locally simulated characters all
+  // animate correctly without extra bookkeeping at the call site.
+  gaitPhase(key, x, y) {
+    let g = this.gait.get(key);
+    if (!g) {
+      g = { phase: (key.length * 1.7) % 6.28, x, y, seen: this.frameNo };
+      this.gait.set(key, g);
+    }
+    const moved = Math.min(Math.hypot(x - g.x, y - g.y), 24);
+    g.phase += moved * 0.34;
+    g.x = x; g.y = y; g.seen = this.frameNo;
+    return { phase: g.phase, moving: moved > 0.06 };
+  }
+
+  pruneGait() {
+    if (this.gait.size < 400) return;
+    for (const [key, g] of this.gait) {
+      if (this.frameNo - g.seen > 120) this.gait.delete(key);
+    }
+  }
+
+  drawPed(p) {
+    const look = pedLook(p.id);
+    const g = this.gaitPhase('n' + p.id, p.x, p.y);
+    this.drawCharacter({
+      x: p.x, y: p.y, body: p.angle, aim: p.angle,
+      phase: g.phase, moving: g.moving, scale: 0.95,
+      jacket: look.shirt, trousers: look.trousers, shoes: look.shoes,
+      skin: look.skin, hat: look.hat, hatBrim: look.hatBrim, hair: look.hair, weapon: 0
+    });
+  }
+
+  drawPlayer(p, opts = {}) {
+    const jacket = p.color || '#ffd23f';
+    const g = this.gaitPhase('p' + (p.id || 0), p.x, p.y);
+    this.drawCharacter({
+      x: p.x, y: p.y,
+      body: p.bodyAngle !== undefined ? p.bodyAngle : p.angle,
+      aim: p.angle,
+      phase: g.phase, moving: g.moving, scale: 1.15,
+      jacket, trousers: '#4a5468', shoes: '#15181e', skin: '#e8cba4',
+      hat: '#232936', hatBrim: '#171b24', hatBand: jacket, hair: '#3a2b20',
+      weapon: opts.weapon || 0, hit: opts.hit
+    });
 
     if (opts.name) {
       const s = this.worldToScreen(p.x, p.y);
@@ -519,5 +691,30 @@ function shiftColor(hex, amt) {
   return `rgb(${r},${g},${b})`;
 }
 
-const PED_COLORS = ['#c94f4f', '#4f7fc9', '#4fc98a', '#c9a84f', '#9a4fc9', '#dddddd', '#6b7280', '#e07a3f'];
-export function pedColor(id) { return PED_COLORS[(id * 2654435761 >>> 0) % PED_COLORS.length]; }
+// Pedestrians get a deterministic look from their id: same person, same
+// outfit on every client, without sending any of it over the wire.
+const PED_SHIRTS = ['#c94f4f', '#4f7fc9', '#4fc98a', '#c9a84f', '#9a4fc9', '#dcdcdc', '#6b7280', '#e07a3f'];
+const PED_SKINS = ['#f0d3b4', '#e2b48c', '#c68a5f', '#8d5a3b', '#6b4430'];
+const PED_TROUSERS = ['#33384a', '#2b2f3a', '#4a3f36', '#3c4a3c', '#46394f'];
+const PED_HATS = ['#2f3440', '#6b4a2f', '#8d2f2f', '#2f4a6b', '#d8d2c4'];
+const PED_HAIR = ['#2b2018', '#4a3a2a', '#6b4a2f', '#1d1a18', '#8a6a3f', '#5c5c5c'];
+
+function hash32(n) {
+  n = Math.imul(n ^ (n >>> 15), 2246822507);
+  n = Math.imul(n ^ (n >>> 13), 3266489909);
+  return (n ^ (n >>> 16)) >>> 0;
+}
+
+export function pedLook(id) {
+  const h = hash32(id);
+  const hat = ((h >>> 24) & 255) < 96 ? PED_HATS[(h >>> 3) % PED_HATS.length] : null;
+  return {
+    shirt: PED_SHIRTS[h % PED_SHIRTS.length],
+    skin: PED_SKINS[(h >>> 5) % PED_SKINS.length],
+    trousers: PED_TROUSERS[(h >>> 9) % PED_TROUSERS.length],
+    shoes: '#1b1e25',
+    hair: PED_HAIR[(h >>> 13) % PED_HAIR.length],
+    hat,
+    hatBrim: hat ? shiftColor(hat, -30) : null
+  };
+}
