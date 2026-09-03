@@ -12,12 +12,16 @@ export class Input {
       fire: { label: 'FEUER', r: 52, pressed: false, x: 0, y: 0 },
       enter: { label: 'EIN', r: 36, pressed: false, x: 0, y: 0 },
       aux: { label: 'WAFFE', r: 36, pressed: false, x: 0, y: 0 },
+      bag: { label: 'TASCHE', r: 30, pressed: false, x: 0, y: 0 },
       scores: { label: '≡', r: 20, pressed: false, x: 0, y: 0 }
     };
     this.mouse = { x: 0, y: 0, down: false, active: false };
     // Show the touch controls right away on phones and tablets.
     this.touchUsed = window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false;
     this.onScores = null;
+    this.onInventory = null;        // TASCHE button / I key
+    this.onSelectWeapon = null;     // number keys
+    this.modalHitTest = null;       // an open overlay gets first go at taps
     this.layout(canvas.clientWidth, canvas.clientHeight, { top: 0, right: 0, bottom: 0, left: 0 });
     this.bind();
   }
@@ -31,6 +35,7 @@ export class Input {
     b.fire.x = right - b.fire.r; b.fire.y = bottom - b.fire.r;
     b.enter.x = right - b.enter.r - 14; b.enter.y = b.fire.y - b.fire.r - b.enter.r - 16;
     b.aux.x = b.fire.x - b.fire.r - b.aux.r - 16; b.aux.y = bottom - b.aux.r;
+    b.bag.x = b.aux.x; b.bag.y = b.aux.y - b.aux.r - b.bag.r - 14;
     // sits left of the minimap (108px wide, 14px inset) so nothing overlaps
     b.scores.x = right - 108 - 14 - b.scores.r; b.scores.y = (safe.top || 0) + 20 + b.scores.r;
     this.stickHome = { x: Math.min(150, w * 0.22), y: bottom - 90 };
@@ -55,6 +60,10 @@ export class Input {
       this.keys.add(e.code);
       if (['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.code === 'Tab' && this.onScores) this.onScores();
+      if (e.code === 'KeyI' && this.onInventory) this.onInventory();
+      if (/^Digit[1-5]$/.test(e.code) && this.onSelectWeapon) {
+        this.onSelectWeapon(Number(e.code.slice(5)) - 1);
+      }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
@@ -84,10 +93,15 @@ export class Input {
   onDown(e) {
     const p = this.pos(e);
     if (e.pointerType === 'touch') this.touchUsed = true;
+
+    // An open overlay (the inventory) owns the screen while it is up.
+    if (this.modalHitTest && this.modalHitTest(p.x, p.y)) { e.preventDefault(); return; }
+
     const hit = this.hitButton(p.x, p.y);
 
     if (hit) {
       if (hit === 'scores') { if (this.onScores) this.onScores(); return; }
+      if (hit === 'bag') { if (this.onInventory) this.onInventory(); return; }
       this.buttons[hit].pressed = true;
       this.pointers.set(e.pointerId, { role: hit, x: p.x, y: p.y });
       e.preventDefault();

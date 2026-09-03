@@ -59,7 +59,9 @@ const state = {
   fps: 0,
   time: 0,
   aim: 0,
-  hurtFlash: 0
+  hurtFlash: 0,
+  invOpen: false,
+  pickupLog: []
 };
 
 let renderer = null;
@@ -129,6 +131,9 @@ function join() {
         renderer = new Renderer(canvas, state.city);
         hud = new Hud(renderer, input);
         input.onScores = toggleScores;
+        input.onInventory = toggleInventory;
+        input.onSelectWeapon = selectWeapon;
+        input.modalHitTest = inventoryTap;
       } else {
         renderer.setCity(state.city);
       }
@@ -196,6 +201,7 @@ function applySnapshot(msg) {
       e.state = a[5];
     } else if (type === E_PICKUP) {
       e.kind = a[4];
+      e.temp = a[5] === 1;
       sample.a = 0;
     }
     e.prev = e.cur || sample;
@@ -277,7 +283,11 @@ function handleEvent(ev, now) {
       if (d < 400) renderer.shake(6 * ev.m);
       break;
     case 'pickup':
-      if (ev.id === state.me) sfx.pickup();
+      if (ev.id === state.me) {
+        sfx.pickup();
+        state.pickupLog.unshift({ kind: ev.kind, amount: ev.amount, t: state.time });
+        state.pickupLog.length = Math.min(state.pickupLog.length, 6);
+      }
       break;
     case 'kill': {
       const you = ev.victim === state.me;
@@ -289,6 +299,31 @@ function handleEvent(ev, now) {
     case 'joined': toast(`${ev.name} ist beigetreten`); break;
     case 'left': toast(`${ev.name} hat das Spiel verlassen`); break;
   }
+}
+
+// ------------------------------------------------------------------ inventory
+
+function toggleInventory() {
+  state.invOpen = !state.invOpen;
+  input.releaseAll();
+  if (state.invOpen) toastEl.classList.add('hidden');   // keep the header readable
+}
+
+function selectWeapon(w) {
+  if (!state.you) return;
+  if (w !== 0 && !(state.you.iv && state.you.iv[w - 1] > 0)) return;  // nothing to load
+  if (net) net.selectWeapon(w);
+  state.you.w = w;                                    // instant feedback
+  state.invOpen = false;
+}
+
+// Taps while the inventory is open belong to the inventory.
+function inventoryTap(x, y) {
+  if (!state.invOpen || !hud) return false;
+  const hit = hud.hitInventory(x, y);
+  if (hit === 'close') state.invOpen = false;
+  else if (typeof hit === 'number') selectWeapon(hit);
+  return true;
 }
 
 // ----------------------------------------------------------------- scoreboard
@@ -368,6 +403,9 @@ function frame(now) {
   const inCar = !!state.localCar;
   state.aim = computeAim();
   const inp = input.sample(state.aim, inCar);
+  if (state.invOpen) {                    // hands are busy rummaging
+    inp.mx = 0; inp.my = 0; inp.fire = false; inp.enter = false; inp.swap = false;
+  }
   if (net) net.sendInput(inp, now);
 
   // --- local prediction

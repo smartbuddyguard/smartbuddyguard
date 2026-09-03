@@ -70,7 +70,9 @@ const state = {
   ping: 0,
   fps: 0,
   playerCount: 1,
-  time: 0
+  time: 0,
+  invOpen: false,
+  pickupLog: []
 };
 
 // ------------------------------------------------------------------ helpers
@@ -135,6 +137,9 @@ function start(seed) {
     renderer = new Renderer(canvas, world.city);
     hud = new Hud(renderer, input);
     input.onScores = togglePause;
+    input.onInventory = toggleInventory;
+    input.onSelectWeapon = selectWeapon;
+    input.modalHitTest = inventoryTap;
   } else {
     renderer.setCity(world.city);
     renderer.decals.length = 0;
@@ -149,6 +154,8 @@ function start(seed) {
   state.local.x = player.x;
   state.local.y = player.y;
   state.time = 0;
+  state.invOpen = false;
+  state.pickupLog.length = 0;
 
   resize();
   menu.classList.add('hidden');
@@ -185,6 +192,29 @@ function togglePause() {
 }
 resumeBtn.onclick = togglePause;
 newCityBtn.onclick = () => { pauseEl.classList.add('hidden'); paused = false; start(); };
+
+// ---------------------------------------------------------------- inventory
+
+function toggleInventory() {
+  if (!running) return;
+  state.invOpen = !state.invOpen;
+  input.releaseAll();
+  if (state.invOpen) toastEl.classList.add('hidden');   // keep the header readable
+}
+
+function selectWeapon(w) {
+  if (!player || !player.alive) return;
+  world.selectWeapon(player, w);
+  state.invOpen = false;
+}
+
+function inventoryTap(x, y) {
+  if (!state.invOpen || !hud) return false;
+  const hit = hud.hitInventory(x, y);
+  if (hit === 'close') state.invOpen = false;
+  else if (typeof hit === 'number') selectWeapon(hit);
+  return true;
+}
 
 // ------------------------------------------------------------------- aiming
 
@@ -237,7 +267,13 @@ function consumeEvents() {
         if (vol > 0.03) sfx.crash(ev.m * vol);
         if (d < 400) renderer.shake(6 * ev.m);
         break;
-      case 'pickup': if (ev.id === ME) sfx.pickup(); break;
+      case 'pickup':
+        if (ev.id === ME) {
+          sfx.pickup();
+          state.pickupLog.unshift({ kind: ev.kind, amount: ev.amount, t: state.time });
+          state.pickupLog.length = Math.min(state.pickupLog.length, 6);
+        }
+        break;
       case 'kill':
         hud.pushKill(`${ev.killerName} ☠ ${ev.victimName}${ev.weapon ? ' · ' + ev.weapon : ''}`, state.time);
         if (ev.victim === ME) { sfx.die(); renderer.shake(14); }
@@ -259,6 +295,8 @@ function youFrom() {
     am: player.ammo[player.weapon] === undefined ? -1 : player.ammo[player.weapon],
     wl: Math.floor(player.wanted),
     cash: player.cash, k: player.kills, d: player.deaths,
+    iv: [player.ammo[1] | 0, player.ammo[2] | 0, player.ammo[3] | 0, player.ammo[4] | 0],
+    ow: (player.owned[1] ? 1 : 0) | (player.owned[2] ? 2 : 0) | (player.owned[3] ? 4 : 0) | (player.owned[4] ? 8 : 0),
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),
@@ -301,6 +339,9 @@ function frame(now) {
   const inCar = !!player.carId;
   const aim = computeAim();
   const inp = input.sample(aim, inCar);
+  if (state.invOpen) {                    // hands are busy rummaging
+    inp.mx = 0; inp.my = 0; inp.fire = false; inp.enter = false; inp.swap = false;
+  }
   world.setInput(ME, { mx: inp.mx, my: inp.my, aim, fire: inp.fire, brake: inp.brake, enter: inp.enter, swap: inp.swap });
 
   const prevHp = player.hp;

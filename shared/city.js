@@ -146,7 +146,8 @@ function splitBlock(rng, r, count) {
 
 function buildPickupSpots(city, rng) {
   const spots = [];
-  const kinds = [1, 2, 3, 5, 6, 7, 2, 5, 7, 4];
+  // Pistols are the common street find, rockets the rare one.
+  const kinds = [1, 2, 1, 5, 6, 7, 3, 5, 7, 4];
   for (let n = 0; n < 60; n++) {
     const s = city.walkSpots[(rng() * city.walkSpots.length) | 0];
     if (!s) break;

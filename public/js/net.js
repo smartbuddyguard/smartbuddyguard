@@ -78,5 +78,7 @@ export class Net {
 
   requestRespawn() { this.send({ t: 'respawn' }); }
 
+  selectWeapon(w) { this.send({ t: 'weapon', w }); }
+
   close() { if (this.ws) this.ws.close(); }
 }

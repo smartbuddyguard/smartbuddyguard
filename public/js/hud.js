@@ -4,12 +4,20 @@
 import { MAP_SIZE, WEAPONS, MAX_WANTED } from '/shared/constants.js';
 import { clamp } from '/shared/util.js';
 
+export const WEAPON_LABELS = ['Fäuste', 'Pistole', 'Uzi', 'Schrotflinte', 'Raketenwerfer'];
+export const PICKUP_LABELS = {
+  1: 'Pistole', 2: 'Uzi', 3: 'Schrotflinte', 4: 'Raketenwerfer',
+  5: 'Medikit', 6: 'Panzerung', 7: 'Geld'
+};
+
 export class Hud {
   constructor(renderer, input) {
     this.r = renderer;
     this.input = input;
     this.killFeed = [];
     this.safe = { top: 0, right: 0, bottom: 0, left: 0 };
+    this.invRects = [];       // hit boxes of the inventory rows
+    this.invPanel = null;
   }
 
   pushKill(text, time) {
@@ -36,6 +44,7 @@ export class Hud {
     }
     this.drawTouchControls(ctx, state);
     this.drawNetInfo(ctx, state, w, h, s);
+    if (state.invOpen && you) this.drawInventory(ctx, state, w, h);
     ctx.restore();
   }
 
@@ -88,7 +97,7 @@ export class Hud {
     ctx.font = '700 14px ui-sans-serif, sans-serif';
     ctx.fillStyle = '#fff';
     const ammoTxt = you.am < 0 || wep.ammo === Infinity ? '∞' : you.am;
-    ctx.fillText(`${wep.name}  ${ammoTxt}`, x, starY + 64);
+    ctx.fillText(`${WEAPON_LABELS[you.w] || wep.name}  ${ammoTxt}`, x, starY + 64);
 
     if (you.car) {
       ctx.fillStyle = '#ffd23f';
@@ -180,6 +189,162 @@ export class Hud {
     ctx.fillStyle = 'rgba(200,210,225,.5)';
     const label = state.netLabel || `${state.ping} ms · ${state.fps} fps · ${state.playerCount} online`;
     ctx.fillText(label, 14 + s.left, h - 10 - s.bottom);
+  }
+
+
+  // ------------------------------------------------------------- inventory
+
+  // Everything the player is carrying: weapons with their ammo, condition,
+  // money and the last things picked up. Rows are tappable to switch weapon.
+  drawInventory(ctx, state, w, h) {
+    const you = state.you;
+    const rowH = clamp(Math.round((h - 200) / WEAPON_LABELS.length), 30, 42);
+    const pw = Math.min(400, w - 40);
+    const ph = 62 + WEAPON_LABELS.length * rowH + 96;
+    const px = Math.round((w - pw) / 2);
+    const py = Math.round((h - ph) / 2);
+    this.invPanel = { x: px, y: py, w: pw, h: ph };
+    this.invRects = [];
+
+    ctx.fillStyle = 'rgba(6,8,12,.62)';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = 'rgba(18,22,30,.97)';
+    this.panelPath(ctx, px, py, pw, ph, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = '700 12px ui-monospace, monospace';
+    ctx.fillStyle = '#8d97ab';
+    ctx.fillText('T A S C H E', px + 16, py + 26);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#5e6779';
+    ctx.fillText('TIPPEN ZUM WÄHLEN · ✕', px + pw - 16, py + 26);
+
+    let y = py + 42;
+    for (let k = 0; k < WEAPON_LABELS.length; k++) {
+      const ammo = k === 0 ? Infinity : (state.you.iv ? state.you.iv[k - 1] : 0);
+      const owned = k === 0 || (you.ow & (1 << (k - 1))) !== 0;
+      const selected = you.w === k;
+      const rect = { x: px + 10, y, w: pw - 20, h: rowH - 4, weapon: k, usable: owned && (k === 0 || ammo > 0) };
+      this.invRects.push(rect);
+
+      if (selected) {
+        ctx.fillStyle = 'rgba(255,210,63,.14)';
+        this.panelPath(ctx, rect.x, rect.y, rect.w, rect.h, 8);
+        ctx.fill();
+        ctx.fillStyle = '#ffd23f';
+        ctx.fillRect(rect.x, rect.y + 6, 3, rect.h - 12);
+      } else if (owned) {
+        ctx.fillStyle = 'rgba(255,255,255,.04)';
+        this.panelPath(ctx, rect.x, rect.y, rect.w, rect.h, 8);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = owned ? 1 : 0.32;
+      this.drawWeaponIcon(ctx, k, rect.x + 42, rect.y + rect.h / 2);
+
+      ctx.textAlign = 'left';
+      ctx.font = '700 14px ui-sans-serif, sans-serif';
+      ctx.fillStyle = selected ? '#ffd23f' : '#e8ecf4';
+      ctx.fillText(WEAPON_LABELS[k], rect.x + 74, rect.y + rect.h / 2 + 5);
+
+      ctx.textAlign = 'right';
+      ctx.font = '700 13px ui-monospace, monospace';
+      if (!owned) { ctx.fillStyle = '#5e6779'; ctx.fillText('nicht dabei', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else if (k === 0) { ctx.fillStyle = '#8d97ab'; ctx.fillText('∞', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else if (ammo > 0) { ctx.fillStyle = '#e8ecf4'; ctx.fillText(`${ammo} Schuss`, rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else { ctx.fillStyle = '#ff8a7a'; ctx.fillText('leer', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      ctx.globalAlpha = 1;
+
+      y += rowH;
+    }
+
+    // condition + money
+    y += 6;
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    ctx.beginPath(); ctx.moveTo(px + 12, y); ctx.lineTo(px + pw - 12, y); ctx.stroke();
+    y += 22;
+    const chips = [
+      ['Gesundheit', `${Math.max(0, Math.round(you.hp))}%`, '#e04b3c'],
+      ['Panzerung', `${Math.round(you.ar)}%`, '#59b7ff'],
+      ['Geld', `$${you.cash}`, '#7ce08a']
+    ];
+    const chipW = (pw - 24) / 3;
+    chips.forEach(([label, value, color], i) => {
+      const cx = px + 12 + i * chipW;
+      ctx.textAlign = 'left';
+      ctx.font = '600 10px ui-monospace, monospace';
+      ctx.fillStyle = '#8d97ab';
+      ctx.fillText(label.toUpperCase(), cx, y);
+      ctx.font = '700 16px ui-monospace, monospace';
+      ctx.fillStyle = color;
+      ctx.fillText(value, cx, y + 20);
+    });
+
+    // what was picked up last
+    y += 42;
+    ctx.textAlign = 'left';
+    ctx.font = '600 10px ui-monospace, monospace';
+    ctx.fillStyle = '#8d97ab';
+    ctx.fillText('ZULETZT AUFGESAMMELT', px + 12, y);
+    ctx.font = '600 12px ui-sans-serif, sans-serif';
+    const log = state.pickupLog || [];
+    if (!log.length) {
+      ctx.fillStyle = '#5e6779';
+      ctx.fillText('Noch nichts – Waffen liegen in der Stadt und bei Erledigten.', px + 12, y + 18);
+    } else {
+      let lx = px + 12;
+      for (const item of log.slice(0, 3)) {
+        const text = `＋ ${PICKUP_LABELS[item.kind] || '?'}${item.amount ? ' ×' + item.amount : ''}`;
+        ctx.fillStyle = '#c3cad8';
+        ctx.fillText(text, lx, y + 18);
+        lx += ctx.measureText(text).width + 16;
+      }
+    }
+  }
+
+  drawWeaponIcon(ctx, kind, cx, cy) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (kind === 0) {                       // fists
+      ctx.fillStyle = '#e8cba4';
+      ctx.beginPath(); ctx.arc(-5, -3, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, 3, 5, 0, Math.PI * 2); ctx.fill();
+    } else {
+      // Each weapon is a different length – scale it into the same icon box.
+      const fit = { 1: [1.6, -12], 2: [1.45, -12.5], 3: [1.2, -13], 4: [1.05, -13.5] }[kind];
+      ctx.scale(fit[0], fit[0]);
+      ctx.translate(fit[1], 0);
+      this.r.drawHeldWeapon(kind);
+    }
+    ctx.restore();
+  }
+
+  panelPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Returns 'close', a weapon index, or null.
+  hitInventory(x, y) {
+    for (const r of this.invRects) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        return r.usable ? r.weapon : 'none';
+      }
+    }
+    const p = this.invPanel;
+    if (!p || x < p.x || x > p.x + p.w || y < p.y || y > p.y + p.h) return 'close';
+    if (y < p.y + 34 && x > p.x + p.w - 60) return 'close';
+    return 'none';
   }
 
   drawTouchControls(ctx, state) {

@@ -137,6 +137,11 @@ function handleMessage(client, msg) {
     case 'ping':
       client.ws.send(JSON.stringify({ t: 'pong', c: msg.c, s: Date.now() }));
       break;
+    case 'weapon': {
+      const p = world.players.get(client.id);
+      if (p && p.alive) world.selectWeapon(p, msg.w | 0);
+      break;
+    }
     case 'respawn': {
       const p = world.players.get(client.id);
       if (p && !p.alive && world.time >= p.respawnAt - 0.2) world.respawn(p);
@@ -175,7 +180,7 @@ function buildSnapshot(player) {
   }
   for (const pu of world.pickups.values()) {
     if (!pu.active || !near(pu.x, pu.y)) continue;
-    ents.push([E_PICKUP, pu.id, r0(pu.x), r0(pu.y), pu.kind]);
+    ents.push([E_PICKUP, pu.id, r0(pu.x), r0(pu.y), pu.kind, pu.temp ? 1 : 0]);
   }
 
   const car = player.carId ? world.cars.get(player.carId) : null;
@@ -187,6 +192,8 @@ function buildSnapshot(player) {
     w: player.weapon, am: player.ammo[player.weapon] === undefined ? -1 : player.ammo[player.weapon],
     wl: Math.floor(player.wanted), wf: r3(player.wanted % 1),
     cash: player.cash, k: player.kills, d: player.deaths, seq: player.lastSeq,
+    iv: [player.ammo[1] | 0, player.ammo[2] | 0, player.ammo[3] | 0, player.ammo[4] | 0],
+    ow: (player.owned[1] ? 1 : 0) | (player.owned[2] ? 2 : 0) | (player.owned[3] ? 4 : 0) | (player.owned[4] ? 8 : 0),
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),

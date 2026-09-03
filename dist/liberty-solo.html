@@ -505,7 +505,8 @@ function splitBlock(rng, r, count) {
 
 function buildPickupSpots(city, rng) {
   const spots = [];
-  const kinds = [1, 2, 3, 5, 6, 7, 2, 5, 7, 4];
+  // Pistols are the common street find, rockets the rare one.
+  const kinds = [1, 2, 1, 5, 6, 7, 3, 5, 7, 4];
   for (let n = 0; n < 60; n++) {
     const s = city.walkSpots[(rng() * city.walkSpots.length) | 0];
     if (!s) break;
@@ -738,9 +739,25 @@ class World {
     return this.city.walkSpots[0];
   }
 
-  spawnPickup(x, y, kind) {
+  spawnPickup(x, y, kind, opts = {}) {
     const id = this.id();
-    this.pickups.set(id, { id, x, y, kind, active: true, respawnAt: 0 });
+    this.pickups.set(id, {
+      id, x, y, kind, active: true, respawnAt: 0,
+      amount: opts.amount,                       // overrides the default amount
+      temp: !!opts.temp,                         // dropped loot: no respawn
+      dieAt: opts.temp ? this.time + (opts.ttl || 45) : 0
+    });
+    return id;
+  }
+
+  // Loot dropped where somebody went down – the logical way to get a gun.
+  dropLoot(x, y, kind, amount, ttl = 45) {
+    // Keep the street tidy: drop only if nothing comparable lies right there.
+    for (const pu of this.pickups.values()) {
+      if (pu.temp && pu.kind === kind && dist2(pu.x, pu.y, x, y) < 40 * 40) return null;
+    }
+    const id = this.spawnPickup(x + this.rand(-12, 12), y + this.rand(-12, 12), kind, { amount, temp: true, ttl });
+    this.events.push({ t: 'drop', x, y, kind });
     return id;
   }
 
@@ -812,7 +829,8 @@ class World {
     const p = {
       id, name, color, x: s.x, y: s.y, vx: 0, vy: 0, angle: 0,
       hp: PLAYER_MAX_HP, armour: 0, alive: true, respawnAt: 0, moving: 0,
-      weapon: 1, ammo: { 1: 24, 2: 0, 3: 0, 4: 0 },
+      weapon: 0, ammo: { 1: 0, 2: 0, 3: 0, 4: 0 },
+      owned: { 1: false, 2: false, 3: false, 4: false },
       wanted: 0, wantedTimer: 0, kills: 0, deaths: 0, cash: 0, score: 0,
       carId: null, fireCd: 0, input: emptyInput(), lastSeq: 0, enterLatch: false,
       switchLatch: false, hitFlash: 0, joinedAt: this.time
@@ -931,6 +949,16 @@ class World {
         if (p.input.fire) this.fireWeapon(p, p.input.aim || p.angle, null);
       }
     }
+  }
+
+  // Picking a weapon straight out of the inventory.
+  selectWeapon(p, w) {
+    if (!p) return;
+    if (w === 0) { p.weapon = 0; this.rosterDirty = true; return; }
+    if (![1, 2, 3, 4].includes(w)) return;
+    if (!(p.ammo[w] > 0)) return;                // empty guns stay holstered
+    p.weapon = w;
+    this.rosterDirty = true;
   }
 
   cycleWeapon(p) {
@@ -1112,6 +1140,13 @@ class World {
     const car = p.carId ? this.cars.get(p.carId) : null;
     if (car) { car.driver = null; p.carId = null; }
     this.events.push({ t: 'blood', x: p.x, y: p.y, kind: 'player', big: 1 });
+
+    // Whatever they were carrying stays on the pavement for the next person.
+    if (p.weapon > 0 && p.ammo[p.weapon] > 0) {
+      this.dropLoot(p.x, p.y, p.weapon, Math.min(p.ammo[p.weapon], 90));
+    }
+    if (p.cash >= 200) this.dropLoot(p.x, p.y, P_CASH, Math.round(p.cash * 0.25), 40);
+
     const killer = attacker && attacker.id && this.players.get(attacker.id) ? this.players.get(attacker.id) : null;
     if (killer && killer !== p) {
       killer.kills++;
@@ -1137,10 +1172,10 @@ class World {
       this.peds.delete(ped.id);
       const killer = attacker && this.players.get(attacker.id);
       if (killer) {
-        killer.cash += 50;
         killer.score += 10;
         this.addWanted(killer, CRIME_KILL_PED);
       }
+      if (this.rng() < 0.35) this.dropLoot(ped.x, ped.y, P_CASH, 40 + this.randInt(90), 30);
     }
   }
 
@@ -1157,6 +1192,7 @@ class World {
         }
       }
       if (car.cop && attacker) this.addWanted(attacker, CRIME_KILL_COP);
+      if (car.cop) this.dropLoot(car.x, car.y, P_PISTOL, 14, 50);   // the officer's sidearm
       this.cars.delete(car.id);
       this.explode(car.x, car.y, 110, 90, attacker || null);
     }
@@ -1173,7 +1209,10 @@ class World {
     const s = this.freeWalkSpot();
     p.x = s.x; p.y = s.y; p.vx = 0; p.vy = 0;
     p.hp = PLAYER_MAX_HP; p.armour = 0; p.alive = true;
-    p.weapon = 1; p.ammo = { 1: 24, 2: 0, 3: 0, 4: 0 };
+    // You always start over with bare fists – guns have to be found again.
+    p.weapon = 0;
+    p.ammo = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    p.owned = { 1: false, 2: false, 3: false, 4: false };
     p.wanted = 0; p.wantedTimer = 0; p.carId = null;
     this.rosterDirty = true;
     this.events.push({ t: 'spawn', x: p.x, y: p.y, id: p.id });
@@ -1408,6 +1447,7 @@ class World {
 
   updatePickups(dt) {
     for (const pu of this.pickups.values()) {
+      if (pu.temp && this.time >= pu.dieAt) { this.pickups.delete(pu.id); continue; }
       if (!pu.active) {
         if (this.time >= pu.respawnAt) pu.active = true;
         continue;
@@ -1415,32 +1455,47 @@ class World {
       for (const p of this.players.values()) {
         if (!p.alive || p.carId) continue;
         if (dist2(p.x, p.y, pu.x, pu.y) > 24 * 24) continue;
-        if (!this.applyPickup(p, pu.kind)) continue;
-        pu.active = false;
-        pu.respawnAt = this.time + PICKUP_RESPAWN;
-        this.events.push({ t: 'pickup', x: pu.x, y: pu.y, kind: pu.kind, id: p.id });
+        const got = this.applyPickup(p, pu.kind, pu.amount);
+        if (!got) continue;
+        this.events.push({ t: 'pickup', x: pu.x, y: pu.y, kind: pu.kind, id: p.id, amount: got });
+        if (pu.temp) {
+          this.pickups.delete(pu.id);            // dropped loot is gone for good
+        } else {
+          pu.active = false;
+          pu.respawnAt = this.time + PICKUP_RESPAWN;
+        }
         break;
       }
     }
   }
 
-  applyPickup(p, kind) {
+  // Returns how much was actually taken (0 = nothing needed, pickup stays).
+  applyPickup(p, kind, amount) {
+    let got = 0;
     switch (kind) {
-      case P_PISTOL: p.ammo[1] += 40; p.weapon = Math.max(p.weapon, 1); break;
-      case P_UZI: p.ammo[2] += 120; p.weapon = 2; break;
-      case P_SHOTGUN: p.ammo[3] += 20; p.weapon = 3; break;
-      case P_ROCKET: p.ammo[4] += 5; p.weapon = 4; break;
+      case P_PISTOL: got = amount || 34; p.ammo[1] += got; p.owned[1] = true; p.weapon = 1; break;
+      case P_UZI: got = amount || 110; p.ammo[2] += got; p.owned[2] = true; p.weapon = 2; break;
+      case P_SHOTGUN: got = amount || 18; p.ammo[3] += got; p.owned[3] = true; p.weapon = 3; break;
+      case P_ROCKET: got = amount || 4; p.ammo[4] += got; p.owned[4] = true; p.weapon = 4; break;
       case P_HEALTH:
-        if (p.hp >= PLAYER_MAX_HP) return false;
-        p.hp = PLAYER_MAX_HP; break;
+        if (p.hp >= PLAYER_MAX_HP) return 0;
+        got = Math.round(PLAYER_MAX_HP - p.hp);
+        p.hp = PLAYER_MAX_HP;
+        break;
       case P_ARMOUR:
-        if (p.armour >= 100) return false;
-        p.armour = 100; break;
-      case P_CASH: p.cash += 500; p.score += 25; break;
-      default: return false;
+        if (p.armour >= 100) return 0;
+        got = Math.round(100 - p.armour);
+        p.armour = 100;
+        break;
+      case P_CASH:
+        got = amount || 500;
+        p.cash += got;
+        p.score += 25;
+        break;
+      default: return 0;
     }
     this.rosterDirty = true;
-    return true;
+    return got;
   }
 }
 
@@ -1978,6 +2033,15 @@ class Renderer {
     ctx.fillStyle = st.c;
     ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
+    if (pu.temp) {                              // dropped loot: pulsing ring
+      ctx.strokeStyle = st.c;
+      ctx.globalAlpha = 0.5 + Math.sin(time * 6 + pu.id) * 0.3;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
     ctx.fillStyle = st.c;
     ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#12151c';
@@ -2177,12 +2241,20 @@ function pedLook(id) {
 
 
 
+const WEAPON_LABELS = ['Fäuste', 'Pistole', 'Uzi', 'Schrotflinte', 'Raketenwerfer'];
+const PICKUP_LABELS = {
+  1: 'Pistole', 2: 'Uzi', 3: 'Schrotflinte', 4: 'Raketenwerfer',
+  5: 'Medikit', 6: 'Panzerung', 7: 'Geld'
+};
+
 class Hud {
   constructor(renderer, input) {
     this.r = renderer;
     this.input = input;
     this.killFeed = [];
     this.safe = { top: 0, right: 0, bottom: 0, left: 0 };
+    this.invRects = [];       // hit boxes of the inventory rows
+    this.invPanel = null;
   }
 
   pushKill(text, time) {
@@ -2209,6 +2281,7 @@ class Hud {
     }
     this.drawTouchControls(ctx, state);
     this.drawNetInfo(ctx, state, w, h, s);
+    if (state.invOpen && you) this.drawInventory(ctx, state, w, h);
     ctx.restore();
   }
 
@@ -2261,7 +2334,7 @@ class Hud {
     ctx.font = '700 14px ui-sans-serif, sans-serif';
     ctx.fillStyle = '#fff';
     const ammoTxt = you.am < 0 || wep.ammo === Infinity ? '∞' : you.am;
-    ctx.fillText(`${wep.name}  ${ammoTxt}`, x, starY + 64);
+    ctx.fillText(`${WEAPON_LABELS[you.w] || wep.name}  ${ammoTxt}`, x, starY + 64);
 
     if (you.car) {
       ctx.fillStyle = '#ffd23f';
@@ -2355,6 +2428,162 @@ class Hud {
     ctx.fillText(label, 14 + s.left, h - 10 - s.bottom);
   }
 
+
+  // ------------------------------------------------------------- inventory
+
+  // Everything the player is carrying: weapons with their ammo, condition,
+  // money and the last things picked up. Rows are tappable to switch weapon.
+  drawInventory(ctx, state, w, h) {
+    const you = state.you;
+    const rowH = clamp(Math.round((h - 200) / WEAPON_LABELS.length), 30, 42);
+    const pw = Math.min(400, w - 40);
+    const ph = 62 + WEAPON_LABELS.length * rowH + 96;
+    const px = Math.round((w - pw) / 2);
+    const py = Math.round((h - ph) / 2);
+    this.invPanel = { x: px, y: py, w: pw, h: ph };
+    this.invRects = [];
+
+    ctx.fillStyle = 'rgba(6,8,12,.62)';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = 'rgba(18,22,30,.97)';
+    this.panelPath(ctx, px, py, pw, ph, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = '700 12px ui-monospace, monospace';
+    ctx.fillStyle = '#8d97ab';
+    ctx.fillText('T A S C H E', px + 16, py + 26);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#5e6779';
+    ctx.fillText('TIPPEN ZUM WÄHLEN · ✕', px + pw - 16, py + 26);
+
+    let y = py + 42;
+    for (let k = 0; k < WEAPON_LABELS.length; k++) {
+      const ammo = k === 0 ? Infinity : (state.you.iv ? state.you.iv[k - 1] : 0);
+      const owned = k === 0 || (you.ow & (1 << (k - 1))) !== 0;
+      const selected = you.w === k;
+      const rect = { x: px + 10, y, w: pw - 20, h: rowH - 4, weapon: k, usable: owned && (k === 0 || ammo > 0) };
+      this.invRects.push(rect);
+
+      if (selected) {
+        ctx.fillStyle = 'rgba(255,210,63,.14)';
+        this.panelPath(ctx, rect.x, rect.y, rect.w, rect.h, 8);
+        ctx.fill();
+        ctx.fillStyle = '#ffd23f';
+        ctx.fillRect(rect.x, rect.y + 6, 3, rect.h - 12);
+      } else if (owned) {
+        ctx.fillStyle = 'rgba(255,255,255,.04)';
+        this.panelPath(ctx, rect.x, rect.y, rect.w, rect.h, 8);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = owned ? 1 : 0.32;
+      this.drawWeaponIcon(ctx, k, rect.x + 42, rect.y + rect.h / 2);
+
+      ctx.textAlign = 'left';
+      ctx.font = '700 14px ui-sans-serif, sans-serif';
+      ctx.fillStyle = selected ? '#ffd23f' : '#e8ecf4';
+      ctx.fillText(WEAPON_LABELS[k], rect.x + 74, rect.y + rect.h / 2 + 5);
+
+      ctx.textAlign = 'right';
+      ctx.font = '700 13px ui-monospace, monospace';
+      if (!owned) { ctx.fillStyle = '#5e6779'; ctx.fillText('nicht dabei', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else if (k === 0) { ctx.fillStyle = '#8d97ab'; ctx.fillText('∞', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else if (ammo > 0) { ctx.fillStyle = '#e8ecf4'; ctx.fillText(`${ammo} Schuss`, rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      else { ctx.fillStyle = '#ff8a7a'; ctx.fillText('leer', rect.x + rect.w - 12, rect.y + rect.h / 2 + 5); }
+      ctx.globalAlpha = 1;
+
+      y += rowH;
+    }
+
+    // condition + money
+    y += 6;
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    ctx.beginPath(); ctx.moveTo(px + 12, y); ctx.lineTo(px + pw - 12, y); ctx.stroke();
+    y += 22;
+    const chips = [
+      ['Gesundheit', `${Math.max(0, Math.round(you.hp))}%`, '#e04b3c'],
+      ['Panzerung', `${Math.round(you.ar)}%`, '#59b7ff'],
+      ['Geld', `$${you.cash}`, '#7ce08a']
+    ];
+    const chipW = (pw - 24) / 3;
+    chips.forEach(([label, value, color], i) => {
+      const cx = px + 12 + i * chipW;
+      ctx.textAlign = 'left';
+      ctx.font = '600 10px ui-monospace, monospace';
+      ctx.fillStyle = '#8d97ab';
+      ctx.fillText(label.toUpperCase(), cx, y);
+      ctx.font = '700 16px ui-monospace, monospace';
+      ctx.fillStyle = color;
+      ctx.fillText(value, cx, y + 20);
+    });
+
+    // what was picked up last
+    y += 42;
+    ctx.textAlign = 'left';
+    ctx.font = '600 10px ui-monospace, monospace';
+    ctx.fillStyle = '#8d97ab';
+    ctx.fillText('ZULETZT AUFGESAMMELT', px + 12, y);
+    ctx.font = '600 12px ui-sans-serif, sans-serif';
+    const log = state.pickupLog || [];
+    if (!log.length) {
+      ctx.fillStyle = '#5e6779';
+      ctx.fillText('Noch nichts – Waffen liegen in der Stadt und bei Erledigten.', px + 12, y + 18);
+    } else {
+      let lx = px + 12;
+      for (const item of log.slice(0, 3)) {
+        const text = `＋ ${PICKUP_LABELS[item.kind] || '?'}${item.amount ? ' ×' + item.amount : ''}`;
+        ctx.fillStyle = '#c3cad8';
+        ctx.fillText(text, lx, y + 18);
+        lx += ctx.measureText(text).width + 16;
+      }
+    }
+  }
+
+  drawWeaponIcon(ctx, kind, cx, cy) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (kind === 0) {                       // fists
+      ctx.fillStyle = '#e8cba4';
+      ctx.beginPath(); ctx.arc(-5, -3, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, 3, 5, 0, Math.PI * 2); ctx.fill();
+    } else {
+      // Each weapon is a different length – scale it into the same icon box.
+      const fit = { 1: [1.6, -12], 2: [1.45, -12.5], 3: [1.2, -13], 4: [1.05, -13.5] }[kind];
+      ctx.scale(fit[0], fit[0]);
+      ctx.translate(fit[1], 0);
+      this.r.drawHeldWeapon(kind);
+    }
+    ctx.restore();
+  }
+
+  panelPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Returns 'close', a weapon index, or null.
+  hitInventory(x, y) {
+    for (const r of this.invRects) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        return r.usable ? r.weapon : 'none';
+      }
+    }
+    const p = this.invPanel;
+    if (!p || x < p.x || x > p.x + p.w || y < p.y || y > p.y + p.h) return 'close';
+    if (y < p.y + 34 && x > p.x + p.w - 60) return 'close';
+    return 'none';
+  }
+
   drawTouchControls(ctx, state) {
     const inp = this.input;
     if (!inp.touchUsed) return;
@@ -2413,12 +2642,16 @@ class Input {
       fire: { label: 'FEUER', r: 52, pressed: false, x: 0, y: 0 },
       enter: { label: 'EIN', r: 36, pressed: false, x: 0, y: 0 },
       aux: { label: 'WAFFE', r: 36, pressed: false, x: 0, y: 0 },
+      bag: { label: 'TASCHE', r: 30, pressed: false, x: 0, y: 0 },
       scores: { label: '≡', r: 20, pressed: false, x: 0, y: 0 }
     };
     this.mouse = { x: 0, y: 0, down: false, active: false };
     // Show the touch controls right away on phones and tablets.
     this.touchUsed = window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false;
     this.onScores = null;
+    this.onInventory = null;        // TASCHE button / I key
+    this.onSelectWeapon = null;     // number keys
+    this.modalHitTest = null;       // an open overlay gets first go at taps
     this.layout(canvas.clientWidth, canvas.clientHeight, { top: 0, right: 0, bottom: 0, left: 0 });
     this.bind();
   }
@@ -2432,6 +2665,7 @@ class Input {
     b.fire.x = right - b.fire.r; b.fire.y = bottom - b.fire.r;
     b.enter.x = right - b.enter.r - 14; b.enter.y = b.fire.y - b.fire.r - b.enter.r - 16;
     b.aux.x = b.fire.x - b.fire.r - b.aux.r - 16; b.aux.y = bottom - b.aux.r;
+    b.bag.x = b.aux.x; b.bag.y = b.aux.y - b.aux.r - b.bag.r - 14;
     // sits left of the minimap (108px wide, 14px inset) so nothing overlaps
     b.scores.x = right - 108 - 14 - b.scores.r; b.scores.y = (safe.top || 0) + 20 + b.scores.r;
     this.stickHome = { x: Math.min(150, w * 0.22), y: bottom - 90 };
@@ -2456,6 +2690,10 @@ class Input {
       this.keys.add(e.code);
       if (['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.code === 'Tab' && this.onScores) this.onScores();
+      if (e.code === 'KeyI' && this.onInventory) this.onInventory();
+      if (/^Digit[1-5]$/.test(e.code) && this.onSelectWeapon) {
+        this.onSelectWeapon(Number(e.code.slice(5)) - 1);
+      }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
@@ -2485,10 +2723,15 @@ class Input {
   onDown(e) {
     const p = this.pos(e);
     if (e.pointerType === 'touch') this.touchUsed = true;
+
+    // An open overlay (the inventory) owns the screen while it is up.
+    if (this.modalHitTest && this.modalHitTest(p.x, p.y)) { e.preventDefault(); return; }
+
     const hit = this.hitButton(p.x, p.y);
 
     if (hit) {
       if (hit === 'scores') { if (this.onScores) this.onScores(); return; }
+      if (hit === 'bag') { if (this.onInventory) this.onInventory(); return; }
       this.buttons[hit].pressed = true;
       this.pointers.set(e.pointerId, { role: hit, x: p.x, y: p.y });
       e.preventDefault();
@@ -2796,7 +3039,9 @@ const state = {
   ping: 0,
   fps: 0,
   playerCount: 1,
-  time: 0
+  time: 0,
+  invOpen: false,
+  pickupLog: []
 };
 
 // ------------------------------------------------------------------ helpers
@@ -2861,6 +3106,9 @@ function start(seed) {
     renderer = new Renderer(canvas, world.city);
     hud = new Hud(renderer, input);
     input.onScores = togglePause;
+    input.onInventory = toggleInventory;
+    input.onSelectWeapon = selectWeapon;
+    input.modalHitTest = inventoryTap;
   } else {
     renderer.setCity(world.city);
     renderer.decals.length = 0;
@@ -2875,6 +3123,8 @@ function start(seed) {
   state.local.x = player.x;
   state.local.y = player.y;
   state.time = 0;
+  state.invOpen = false;
+  state.pickupLog.length = 0;
 
   resize();
   menu.classList.add('hidden');
@@ -2911,6 +3161,29 @@ function togglePause() {
 }
 resumeBtn.onclick = togglePause;
 newCityBtn.onclick = () => { pauseEl.classList.add('hidden'); paused = false; start(); };
+
+// ---------------------------------------------------------------- inventory
+
+function toggleInventory() {
+  if (!running) return;
+  state.invOpen = !state.invOpen;
+  input.releaseAll();
+  if (state.invOpen) toastEl.classList.add('hidden');   // keep the header readable
+}
+
+function selectWeapon(w) {
+  if (!player || !player.alive) return;
+  world.selectWeapon(player, w);
+  state.invOpen = false;
+}
+
+function inventoryTap(x, y) {
+  if (!state.invOpen || !hud) return false;
+  const hit = hud.hitInventory(x, y);
+  if (hit === 'close') state.invOpen = false;
+  else if (typeof hit === 'number') selectWeapon(hit);
+  return true;
+}
 
 // ------------------------------------------------------------------- aiming
 
@@ -2963,7 +3236,13 @@ function consumeEvents() {
         if (vol > 0.03) sfx.crash(ev.m * vol);
         if (d < 400) renderer.shake(6 * ev.m);
         break;
-      case 'pickup': if (ev.id === ME) sfx.pickup(); break;
+      case 'pickup':
+        if (ev.id === ME) {
+          sfx.pickup();
+          state.pickupLog.unshift({ kind: ev.kind, amount: ev.amount, t: state.time });
+          state.pickupLog.length = Math.min(state.pickupLog.length, 6);
+        }
+        break;
       case 'kill':
         hud.pushKill(`${ev.killerName} ☠ ${ev.victimName}${ev.weapon ? ' · ' + ev.weapon : ''}`, state.time);
         if (ev.victim === ME) { sfx.die(); renderer.shake(14); }
@@ -2985,6 +3264,8 @@ function youFrom() {
     am: player.ammo[player.weapon] === undefined ? -1 : player.ammo[player.weapon],
     wl: Math.floor(player.wanted),
     cash: player.cash, k: player.kills, d: player.deaths,
+    iv: [player.ammo[1] | 0, player.ammo[2] | 0, player.ammo[3] | 0, player.ammo[4] | 0],
+    ow: (player.owned[1] ? 1 : 0) | (player.owned[2] ? 2 : 0) | (player.owned[3] ? 4 : 0) | (player.owned[4] ? 8 : 0),
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),
@@ -3027,6 +3308,9 @@ function frame(now) {
   const inCar = !!player.carId;
   const aim = computeAim();
   const inp = input.sample(aim, inCar);
+  if (state.invOpen) {                    // hands are busy rummaging
+    inp.mx = 0; inp.my = 0; inp.fire = false; inp.enter = false; inp.swap = false;
+  }
   world.setInput(ME, { mx: inp.mx, my: inp.my, aim, fire: inp.fire, brake: inp.brake, enter: inp.enter, swap: inp.swap });
 
   const prevHp = player.hp;

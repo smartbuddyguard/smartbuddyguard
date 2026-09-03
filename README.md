@@ -55,6 +55,8 @@ zusammen in derselben Stadt.
 | Schießen | Button **FEUER** | `Leertaste` oder linke Maustaste |
 | Auto betreten / verlassen | Button **EIN / AUS** | `E` |
 | Waffe wechseln (zu Fuß) | Button **WAFFE** | `Q` |
+| Tasche / Inventar | Button **TASCHE** | `I` |
+| Waffe direkt wählen | Zeile in der Tasche antippen | `1`–`5` |
 | Handbremse / Drift (im Auto) | Button **BREMSE** | `Shift` |
 | Punktetabelle | Button **≡** oben rechts | `Tab` |
 
@@ -79,9 +81,20 @@ rastet leicht auf nahe Gegner ein. Am Desktop wird mit der Maus gezielt.
 * **Fahrzeuge:** 7 Typen (Limousine, Taxi, Sportwagen, Transporter, Truck, Streifenwagen,
   Käfer) mit eigenem Fahrverhalten, Grip, Tempo und Schadensmodell. Autos parken am
   Straßenrand, fahren im Verkehr mit oder werden von der Polizei gefahren.
-* **Waffen:** Fäuste, Pistole, Uzi, Schrotflinte, Raketenwerfer (mit Splash-Schaden und
-  explodierenden Autos). Munition, Health, Panzerung und Geld liegen als Pickups in der
-  Stadt und respawnen.
+* **Waffen:** Du startest **ohne Waffe**, nur mit den Fäusten. Alles andere muss gefunden
+  werden – Pistole, Uzi, Schrotflinte und Raketenwerfer (mit Splash-Schaden und
+  explodierenden Autos) liegen in der Stadt, ebenso Health, Panzerung und Geld. Diese
+  festen Fundorte respawnen nach 22 Sekunden.
+* **Beute:** Wer stirbt, lässt liegen, was er getragen hat. Erledigte Spieler lassen ihre
+  Waffe mit der Restmunition und ein Viertel ihres Geldes fallen, gesprengte Streifenwagen
+  die Dienstwaffe des Cops, Passanten in etwa jedem dritten Fall ihre Brieftasche.
+  Solche Drops liegen 30–50 Sekunden auf der Straße, blinken mit einem gestrichelten Ring
+  und verschwinden nach dem Aufheben endgültig – sie respawnen nicht.
+* **Tasche:** Über den Button **TASCHE** (oder `I`) siehst du alles, was du dabei hast:
+  jede Waffe mit Munitionsstand (nicht besessene sind ausgegraut, leergeschossene als
+  „leer" markiert), Gesundheit, Panzerung, Geld und die zuletzt aufgesammelten Sachen.
+  Eine Zeile antippen wechselt direkt auf diese Waffe. Während die Tasche offen ist,
+  bewegt sich deine Figur nicht und schießt nicht – die Welt läuft aber weiter.
 * **Fahndungslevel:** Schüsse, überfahrene Passanten und erledigte Cops erhöhen die
   Sterne (0–5). Ab einem Stern rücken Streifenwagen an, rammen, verfolgen und schießen.
   Ohne neue Verbrechen kühlt der Level wieder ab.

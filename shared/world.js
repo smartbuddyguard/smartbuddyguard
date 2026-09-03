@@ -51,9 +51,25 @@ export class World {
     return this.city.walkSpots[0];
   }
 
-  spawnPickup(x, y, kind) {
+  spawnPickup(x, y, kind, opts = {}) {
     const id = this.id();
-    this.pickups.set(id, { id, x, y, kind, active: true, respawnAt: 0 });
+    this.pickups.set(id, {
+      id, x, y, kind, active: true, respawnAt: 0,
+      amount: opts.amount,                       // overrides the default amount
+      temp: !!opts.temp,                         // dropped loot: no respawn
+      dieAt: opts.temp ? this.time + (opts.ttl || 45) : 0
+    });
+    return id;
+  }
+
+  // Loot dropped where somebody went down – the logical way to get a gun.
+  dropLoot(x, y, kind, amount, ttl = 45) {
+    // Keep the street tidy: drop only if nothing comparable lies right there.
+    for (const pu of this.pickups.values()) {
+      if (pu.temp && pu.kind === kind && dist2(pu.x, pu.y, x, y) < 40 * 40) return null;
+    }
+    const id = this.spawnPickup(x + this.rand(-12, 12), y + this.rand(-12, 12), kind, { amount, temp: true, ttl });
+    this.events.push({ t: 'drop', x, y, kind });
     return id;
   }
 
@@ -125,7 +141,8 @@ export class World {
     const p = {
       id, name, color, x: s.x, y: s.y, vx: 0, vy: 0, angle: 0,
       hp: PLAYER_MAX_HP, armour: 0, alive: true, respawnAt: 0, moving: 0,
-      weapon: 1, ammo: { 1: 24, 2: 0, 3: 0, 4: 0 },
+      weapon: 0, ammo: { 1: 0, 2: 0, 3: 0, 4: 0 },
+      owned: { 1: false, 2: false, 3: false, 4: false },
       wanted: 0, wantedTimer: 0, kills: 0, deaths: 0, cash: 0, score: 0,
       carId: null, fireCd: 0, input: emptyInput(), lastSeq: 0, enterLatch: false,
       switchLatch: false, hitFlash: 0, joinedAt: this.time
@@ -244,6 +261,16 @@ export class World {
         if (p.input.fire) this.fireWeapon(p, p.input.aim || p.angle, null);
       }
     }
+  }
+
+  // Picking a weapon straight out of the inventory.
+  selectWeapon(p, w) {
+    if (!p) return;
+    if (w === 0) { p.weapon = 0; this.rosterDirty = true; return; }
+    if (![1, 2, 3, 4].includes(w)) return;
+    if (!(p.ammo[w] > 0)) return;                // empty guns stay holstered
+    p.weapon = w;
+    this.rosterDirty = true;
   }
 
   cycleWeapon(p) {
@@ -425,6 +452,13 @@ export class World {
     const car = p.carId ? this.cars.get(p.carId) : null;
     if (car) { car.driver = null; p.carId = null; }
     this.events.push({ t: 'blood', x: p.x, y: p.y, kind: 'player', big: 1 });
+
+    // Whatever they were carrying stays on the pavement for the next person.
+    if (p.weapon > 0 && p.ammo[p.weapon] > 0) {
+      this.dropLoot(p.x, p.y, p.weapon, Math.min(p.ammo[p.weapon], 90));
+    }
+    if (p.cash >= 200) this.dropLoot(p.x, p.y, P_CASH, Math.round(p.cash * 0.25), 40);
+
     const killer = attacker && attacker.id && this.players.get(attacker.id) ? this.players.get(attacker.id) : null;
     if (killer && killer !== p) {
       killer.kills++;
@@ -450,10 +484,10 @@ export class World {
       this.peds.delete(ped.id);
       const killer = attacker && this.players.get(attacker.id);
       if (killer) {
-        killer.cash += 50;
         killer.score += 10;
         this.addWanted(killer, CRIME_KILL_PED);
       }
+      if (this.rng() < 0.35) this.dropLoot(ped.x, ped.y, P_CASH, 40 + this.randInt(90), 30);
     }
   }
 
@@ -470,6 +504,7 @@ export class World {
         }
       }
       if (car.cop && attacker) this.addWanted(attacker, CRIME_KILL_COP);
+      if (car.cop) this.dropLoot(car.x, car.y, P_PISTOL, 14, 50);   // the officer's sidearm
       this.cars.delete(car.id);
       this.explode(car.x, car.y, 110, 90, attacker || null);
     }
@@ -486,7 +521,10 @@ export class World {
     const s = this.freeWalkSpot();
     p.x = s.x; p.y = s.y; p.vx = 0; p.vy = 0;
     p.hp = PLAYER_MAX_HP; p.armour = 0; p.alive = true;
-    p.weapon = 1; p.ammo = { 1: 24, 2: 0, 3: 0, 4: 0 };
+    // You always start over with bare fists – guns have to be found again.
+    p.weapon = 0;
+    p.ammo = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    p.owned = { 1: false, 2: false, 3: false, 4: false };
     p.wanted = 0; p.wantedTimer = 0; p.carId = null;
     this.rosterDirty = true;
     this.events.push({ t: 'spawn', x: p.x, y: p.y, id: p.id });
@@ -721,6 +759,7 @@ export class World {
 
   updatePickups(dt) {
     for (const pu of this.pickups.values()) {
+      if (pu.temp && this.time >= pu.dieAt) { this.pickups.delete(pu.id); continue; }
       if (!pu.active) {
         if (this.time >= pu.respawnAt) pu.active = true;
         continue;
@@ -728,32 +767,47 @@ export class World {
       for (const p of this.players.values()) {
         if (!p.alive || p.carId) continue;
         if (dist2(p.x, p.y, pu.x, pu.y) > 24 * 24) continue;
-        if (!this.applyPickup(p, pu.kind)) continue;
-        pu.active = false;
-        pu.respawnAt = this.time + PICKUP_RESPAWN;
-        this.events.push({ t: 'pickup', x: pu.x, y: pu.y, kind: pu.kind, id: p.id });
+        const got = this.applyPickup(p, pu.kind, pu.amount);
+        if (!got) continue;
+        this.events.push({ t: 'pickup', x: pu.x, y: pu.y, kind: pu.kind, id: p.id, amount: got });
+        if (pu.temp) {
+          this.pickups.delete(pu.id);            // dropped loot is gone for good
+        } else {
+          pu.active = false;
+          pu.respawnAt = this.time + PICKUP_RESPAWN;
+        }
         break;
       }
     }
   }
 
-  applyPickup(p, kind) {
+  // Returns how much was actually taken (0 = nothing needed, pickup stays).
+  applyPickup(p, kind, amount) {
+    let got = 0;
     switch (kind) {
-      case P_PISTOL: p.ammo[1] += 40; p.weapon = Math.max(p.weapon, 1); break;
-      case P_UZI: p.ammo[2] += 120; p.weapon = 2; break;
-      case P_SHOTGUN: p.ammo[3] += 20; p.weapon = 3; break;
-      case P_ROCKET: p.ammo[4] += 5; p.weapon = 4; break;
+      case P_PISTOL: got = amount || 34; p.ammo[1] += got; p.owned[1] = true; p.weapon = 1; break;
+      case P_UZI: got = amount || 110; p.ammo[2] += got; p.owned[2] = true; p.weapon = 2; break;
+      case P_SHOTGUN: got = amount || 18; p.ammo[3] += got; p.owned[3] = true; p.weapon = 3; break;
+      case P_ROCKET: got = amount || 4; p.ammo[4] += got; p.owned[4] = true; p.weapon = 4; break;
       case P_HEALTH:
-        if (p.hp >= PLAYER_MAX_HP) return false;
-        p.hp = PLAYER_MAX_HP; break;
+        if (p.hp >= PLAYER_MAX_HP) return 0;
+        got = Math.round(PLAYER_MAX_HP - p.hp);
+        p.hp = PLAYER_MAX_HP;
+        break;
       case P_ARMOUR:
-        if (p.armour >= 100) return false;
-        p.armour = 100; break;
-      case P_CASH: p.cash += 500; p.score += 25; break;
-      default: return false;
+        if (p.armour >= 100) return 0;
+        got = Math.round(100 - p.armour);
+        p.armour = 100;
+        break;
+      case P_CASH:
+        got = amount || 500;
+        p.cash += got;
+        p.score += 25;
+        break;
+      default: return 0;
     }
     this.rosterDirty = true;
-    return true;
+    return got;
   }
 }
 

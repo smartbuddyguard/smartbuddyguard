@@ -527,6 +527,15 @@ export class Renderer {
     ctx.fillStyle = st.c;
     ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
+    if (pu.temp) {                              // dropped loot: pulsing ring
+      ctx.strokeStyle = st.c;
+      ctx.globalAlpha = 0.5 + Math.sin(time * 6 + pu.id) * 0.3;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
     ctx.fillStyle = st.c;
     ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#12151c';
