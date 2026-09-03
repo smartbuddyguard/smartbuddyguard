@@ -1,0 +1,17 @@
+{
+  "name": "liberty-clone",
+  "version": "1.0.0",
+  "description": "Top-down GTA-1 style open world game with realtime multiplayer, playable in the browser and on iPhone (PWA).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
