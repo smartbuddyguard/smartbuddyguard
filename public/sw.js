@@ -1,6 +1,6 @@
 // Caches the client shell so the game starts instantly (and the menu still
 // loads without a network). Gameplay itself always needs the websocket.
-const CACHE = 'liberty-v2';
+const CACHE = 'liberty-v3';
 const ASSETS = [
   './',
   'index.html',
@@ -14,6 +14,7 @@ const ASSETS = [
   'js/render.js',
   'js/hud.js',
   'js/audio.js',
+  'js/controls.js',
   '/shared/constants.js',
   '/shared/city.js',
   '/shared/physics.js',

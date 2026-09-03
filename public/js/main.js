@@ -5,6 +5,7 @@ import { Input } from './input.js';
 import { Renderer } from './render.js';
 import { Hud } from './hud.js';
 import { Sfx } from './audio.js';
+import { Controls, loadScheme, mountSchemePicker } from './controls.js';
 import { generateCity } from '/shared/city.js';
 import { stepPlayer, stepCar } from '/shared/physics.js';
 import {
@@ -43,6 +44,8 @@ for (const c of COLORS) {
 
 const sfx = new Sfx();
 const input = new Input(canvas);
+const controls = new Controls(loadScheme());
+mountSchemePicker(document.getElementById('scheme'), document.getElementById('schemeHint'), controls);
 
 const state = {
   running: false,
@@ -266,6 +269,7 @@ function handleEvent(ev, now) {
   switch (ev.t) {
     case 'shot':
       renderer.addTracer(ev.x0, ev.y0, ev.x1, ev.y1, ev.w);
+      markShooter(ev);
       if (vol > 0.02) sfx.shot(ev.w, vol);
       break;
     case 'blood':
@@ -301,6 +305,21 @@ function handleEvent(ev, now) {
   }
 }
 
+// Find who fired so their character plays the recoil or punch.
+function markShooter(ev) {
+  let bestKey = null, bestD = 46 * 46;
+  const own = dist2sq(state.local.x, state.local.y, ev.x0, ev.y0);
+  if (own < bestD) { bestD = own; bestKey = 'p' + state.me; }
+  for (const e of state.entities.values()) {
+    if (e.type !== E_PLAYER) continue;
+    const d = dist2sq(e.x, e.y, ev.x0, ev.y0);
+    if (d < bestD) { bestD = d; bestKey = 'p' + e.id; }
+  }
+  if (bestKey) renderer.markAction(bestKey, ev.w > 0 ? 'shoot' : 'punch');
+}
+
+function dist2sq(ax, ay, bx, by) { const dx = bx - ax, dy = by - ay; return dx * dx + dy * dy; }
+
 // ------------------------------------------------------------------ inventory
 
 function toggleInventory() {
@@ -331,7 +350,10 @@ function inventoryTap(x, y) {
 function toggleScores() {
   scoresOpen = !scoresOpen;
   scoresEl.classList.toggle('hidden', !scoresOpen);
-  if (scoresOpen) renderScores();
+  if (scoresOpen) {
+    renderScores();
+    mountSchemePicker(document.getElementById('scoreScheme'), document.getElementById('scoreSchemeHint'), controls);
+  }
   input.releaseAll();
 }
 closeScores.onclick = () => { scoresOpen = false; scoresEl.classList.add('hidden'); };
@@ -401,8 +423,18 @@ function frame(now) {
   state.hurtFlash = Math.max(0, state.hurtFlash - dt);
 
   const inCar = !!state.localCar;
-  state.aim = computeAim();
-  const inp = input.sample(state.aim, inCar);
+  const car = state.localCar;
+  const carFwd = car ? car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle) : 0;
+  const raw = input.sample(0, inCar);
+  const inp = controls.convert(raw, {
+    inCar,
+    carAngle: car ? car.angle : 0,
+    carFwd,
+    playerAngle: state.local.angle,
+    autoAim: computeAim(),
+    dt
+  });
+  state.aim = inp.aim;
   if (state.invOpen) {                    // hands are busy rummaging
     inp.mx = 0; inp.my = 0; inp.fire = false; inp.enter = false; inp.swap = false;
   }
@@ -412,6 +444,7 @@ function frame(now) {
   if (state.you && state.you.al) {
     if (inCar) {
       const c = state.localCar;
+      controls.syncHeading(c.angle);
       c.braking = inp.brake;
       stepCar(state.city, c, { throttle: -inp.my, steer: inp.mx, brake: inp.brake }, dt);
       state.local.x = c.x; state.local.y = c.y; state.local.angle = c.angle;
@@ -424,6 +457,7 @@ function frame(now) {
       }
     } else {
       stepPlayer(state.city, state.local, { mx: inp.mx, my: inp.my }, dt);
+      if (controls.scheme === 'classic') state.local.angle = controls.heading;
     }
   }
 

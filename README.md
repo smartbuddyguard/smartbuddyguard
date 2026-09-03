@@ -49,19 +49,30 @@ zusammen in derselben Stadt.
 
 ## Steuerung
 
+Es gibt zwei Schemata, umschaltbar im Startmenü (im Solo-Modus auch in der Pause, im
+Multiplayer in der Punktetabelle). Die Wahl wird gespeichert.
+
+**Modern** (Voreinstellung, gut für Touch): Der Stick zeigt, wohin du willst. Zu Fuß ist das
+die Laufrichtung, im Auto lenkt der Wagen selbstständig dorthin – drückst du gegen die
+Fahrtrichtung, bremst er erst in die Kurve und dreht um; im Stand setzt er zurück.
+
+**Original** (wie GTA 1): Zu Fuß gehst du vor/zurück und drehst dich mit links/rechts.
+Im Auto sind links/rechts die Lenkung, vor Gas, zurück Bremse und dann Rückwärtsgang.
+
 | Aktion | Touch (iPhone) | Tastatur / Maus |
 |---|---|---|
-| Laufen / Lenken | Joystick auf der linken Bildschirmhälfte (erscheint dort, wo du tippst) | `WASD` oder Pfeiltasten |
-| Schießen | Button **FEUER** | `Leertaste` oder linke Maustaste |
+| Bewegen / Lenken | Joystick auf der linken Bildschirmhälfte (erscheint dort, wo du tippst) | `WASD` oder Pfeiltasten |
+| Schießen / Schlagen | Button **FEUER** | `Leertaste` oder linke Maustaste |
 | Auto betreten / verlassen | Button **EIN / AUS** | `E` |
 | Waffe wechseln (zu Fuß) | Button **WAFFE** | `Q` |
+| Handbremse / Drift (im Auto) | Button **BREMSE** | `Shift` |
 | Tasche / Inventar | Button **TASCHE** | `I` |
 | Waffe direkt wählen | Zeile in der Tasche antippen | `1`–`5` |
-| Handbremse / Drift (im Auto) | Button **BREMSE** | `Shift` |
-| Punktetabelle | Button **≡** oben rechts | `Tab` |
+| Punktetabelle bzw. Pause | Button **≡** oben rechts | `Tab` |
 
-Zielen zu Fuß: Auf dem Touchscreen zielt die Figur automatisch in Laufrichtung und
-rastet leicht auf nahe Gegner ein. Am Desktop wird mit der Maus gezielt.
+Zielen zu Fuß: Im Modern-Schema zielt die Figur in Laufrichtung und rastet leicht auf nahe
+Gegner ein; am Desktop übernimmt die Maus, sobald du sie bewegst. Im Original-Schema zielt
+sie immer dorthin, wohin du dich gedreht hast.
 
 ## Spielinhalt
 
@@ -75,12 +86,20 @@ rastet leicht auf nahe Gegner ein. Am Desktop wird mit der Maus gezielt.
   Tempo aus der tatsächlich zurückgelegten Strecke kommt; der Oberkörper dreht sich in
   Laufrichtung, Arme und Kopf zur Zielrichtung. In der Hand liegt sichtbar die aktuelle
   Waffe (Pistole, Uzi mit Magazin, Schrotflinte mit Holzschaft, Raketenwerfer mit Visier).
+  Beim Gehen federt der Körper leicht, Hüfte und Oberkörper schwingen gegen die Beine, im
+  Stand atmet die Figur nur noch. Ein Schuss erzeugt Rückstoß und ein kurzes Mündungsfeuer,
+  ohne Waffe schlägt die Figur abwechselnd mit links und rechts zu.
   Passanten bekommen aus ihrer ID deterministisch Hemd-, Hosen-, Haar- und Hautfarbe sowie
   in etwa jedem dritten Fall einen Hut – auf allen Clients identisch, ohne ein einziges
   zusätzliches Byte im Netzwerk.
 * **Fahrzeuge:** 7 Typen (Limousine, Taxi, Sportwagen, Transporter, Truck, Streifenwagen,
   Käfer) mit eigenem Fahrverhalten, Grip, Tempo und Schadensmodell. Autos parken am
   Straßenrand, fahren im Verkehr mit oder werden von der Polizei gefahren.
+  Gas, Bremse und Rückwärtsgang liegen wie im Original auf einer Achse: Ziehen bremst,
+  und erst im Stand legt der Wagen den Rückwärtsgang ein (max. 42 % der Vorwärtsgeschwindigkeit).
+  Die Limousine beschleunigt in 2,7 s auf Tempo 300, dreht in einer Sekunde um 180°
+  (Wendekreis ≈ 85 Einheiten, passt also in eine vierspurige Straße) und steht aus 300
+  nach 43 Einheiten. Die Handbremse bricht das Heck aus – gut für 126° in 0,7 s.
 * **Waffen:** Du startest **ohne Waffe**, nur mit den Fäusten. Alles andere muss gefunden
   werden – Pistole, Uzi, Schrotflinte und Raketenwerfer (mit Splash-Schaden und
   explodierenden Autos) liegen in der Stadt, ebenso Health, Panzerung und Geld. Diese
@@ -117,6 +136,7 @@ public/           Client (ES-Module, keine Build-Tools nötig)
   js/solo.js        Einzelspieler-Loop (dieselbe Welt, lokal simuliert)
   js/net.js         WebSocket-Protokoll
   js/input.js       Touch-Controls + Tastatur/Maus
+  js/controls.js    Steuerungsschemata (Modern / Original) inkl. Lenkassistent
   js/render.js      Canvas-Renderer (Stadt, Fahrzeuge, Effekte, Minimap)
   js/hud.js         HUD, Minimap, Killfeed, Touch-Buttons
   js/audio.js       WebAudio-Synthesizer (Schüsse, Motor, Sirene – keine Sounddateien)

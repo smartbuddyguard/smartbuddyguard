@@ -101,26 +101,35 @@ export function stepCar(city, c, input, dt) {
   const damageMul = c.hp !== undefined ? clamp(0.55 + (c.hp / type.hp) * 0.45, 0.55, 1) : 1;
   const maxSpeed = type.max * damageMul;
 
-  if (throttle > 0) fwd += type.acc * throttle * dt;
-  else if (throttle < 0) fwd += (fwd > 0 ? -520 : type.acc * 0.55) * Math.abs(throttle) * dt;
+  // Throttle, brake and reverse are one axis, like in the original: pulling
+  // back brakes while rolling forwards and only then engages reverse gear.
+  if (throttle > 0) {
+    fwd += type.acc * throttle * dt;
+  } else if (throttle < 0) {
+    const t = -throttle;
+    if (fwd > 6) fwd -= 780 * t * dt;                  // brakes bite hard
+    else fwd -= type.acc * 0.7 * t * dt;               // reverse gear
+  }
 
   // Rolling resistance + drag
   fwd *= Math.exp(-(handbrake ? 3.2 : 0.9) * dt);
-  if (Math.abs(fwd) > maxSpeed) fwd = Math.sign(fwd) * maxSpeed;
-  if (Math.abs(fwd) < 3 && throttle === 0) fwd = 0;
+  if (fwd > maxSpeed) fwd = maxSpeed;
+  if (fwd < -maxSpeed * 0.42) fwd = -maxSpeed * 0.42;  // reverse is slower
+  if (Math.abs(fwd) < 4 && throttle === 0) fwd = 0;
 
   // Sideways grip: high grip = no slide, handbrake = drifting.
-  const grip = handbrake ? 1.3 : type.grip;
+  const grip = handbrake ? 1.5 : type.grip * 1.25;
   lat *= Math.exp(-grip * dt);
 
-  // Steering scales with speed and flips when reversing.
-  const speedFactor = clamp(Math.abs(fwd) / 120, 0, 1) * clamp(1.15 - Math.abs(fwd) / (type.max * 2.4), 0.45, 1);
-  const turn = steer * 3.1 * speedFactor * Math.sign(fwd || 1);
+  // Steering: full authority from walking pace so the car is manoeuvrable in
+  // traffic, gently reduced flat out, and mirrored while reversing.
+  const speedFactor = clamp(Math.abs(fwd) / 60, 0, 1) * clamp(1.2 - Math.abs(fwd) / (type.max * 2.6), 0.55, 1);
+  const turn = steer * 3.4 * speedFactor * Math.sign(fwd || 1);
   c.angle += turn * dt;
   if (c.angle > Math.PI) c.angle -= Math.PI * 2;
   if (c.angle < -Math.PI) c.angle += Math.PI * 2;
   // Drifting cars keep some of their old momentum sideways.
-  lat += turn * Math.abs(fwd) * dt * (handbrake ? 0.55 : 0.12);
+  lat += turn * Math.abs(fwd) * dt * (handbrake ? 0.5 : 0.08);
 
   const nc = Math.cos(c.angle), ns = Math.sin(c.angle);
   c.vx = fwd * nc - lat * ns;

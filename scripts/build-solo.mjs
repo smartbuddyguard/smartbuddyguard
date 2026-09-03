@@ -23,6 +23,7 @@ const MODULES = [
   'public/js/hud.js',
   'public/js/input.js',
   'public/js/audio.js',
+  'public/js/controls.js',
   'public/js/solo.js'
 ];
 

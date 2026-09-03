@@ -38,7 +38,8 @@ export class Renderer {
     this.shakeTime = 0;
     this.shakeMag = 0;
     this.labels = [];
-    this.gait = new Map();   // walk cycle phase per character
+    this.gait = new Map();     // walk cycle phase per character
+    this.actions = new Map();  // short punch / recoil animations
     this.frameNo = 0;
     this.minimap = this.buildMinimap();
   }
@@ -315,11 +316,17 @@ export class Renderer {
     const jacket = o.hit ? '#ff7a68' : o.jacket;
     const sleeve = shiftColor(jacket, -22);
     const shoulder = shiftColor(jacket, 16);
-    const stride = Math.sin(o.phase) * (o.moving ? 1 : 0.12);
+    const act = o.action || null;
+    const stride = Math.sin(o.phase) * (o.moving ? 1 : 0);
+    // Walking bounces the body; standing still it only breathes.
+    const bob = o.moving
+      ? 1 + Math.abs(Math.sin(o.phase)) * 0.035
+      : 1 + Math.sin(performance.now() / 900) * 0.012;
 
     ctx.save();
     ctx.translate(o.x, o.y);
-    if (o.scale && o.scale !== 1) ctx.scale(o.scale, o.scale);
+    const scale = (o.scale || 1) * bob;
+    if (scale !== 1) ctx.scale(scale, scale);
 
     // The shadow stays put no matter which way the character turns.
     ctx.fillStyle = 'rgba(0,0,0,.22)';
@@ -329,54 +336,74 @@ export class Renderer {
 
     // --- lower body: legs and torso follow the direction of travel.
     // Seen from above the legs sit under the torso, so it is the stride that
-    // makes a foot swing out past the silhouette - one foot at a time, which
-    // is exactly how a walk cycle reads from this angle.
+    // swings a foot out past the silhouette - one at a time, which is exactly
+    // how a walk cycle reads from this angle.
     ctx.save();
     ctx.rotate(o.body);
-    // The legs sit slightly wider than the torso, so they stay visible from
-    // above, and the stride swings one shoe past the torso at a time.
     for (const side of [-1, 1]) {
-      const off = side * 5.8;
-      const step = stride * 5.4 * side;
-      this.limb(-4, off, 3.6 + step, off, 4.6, o.trousers, 'rgba(0,0,0,.45)');
+      const off = side * 5.4;
+      const step = stride * 4.6 * side;
+      // The feet always stick out past the torso, the stride only swings them
+      // back and forth - otherwise the legs vanish at the zero crossing.
+      this.limb(-4, off, 4.4 + step * 0.8, off, 4.6, o.trousers, 'rgba(0,0,0,.45)');
       ctx.save();
-      ctx.translate(4.8 + step, off);
+      ctx.translate(5.9 + step, off);
+      ctx.rotate(step * 0.05);                       // the foot rolls as it lands
       ctx.fillStyle = o.shoes;
       this.roundRect(-2.5, -2.2, 5.2, 4.4, 1.8);
       ctx.fill();
       ctx.restore();
     }
 
+    ctx.rotate(-stride * 0.07);                      // hips and torso counter-swing
     ctx.fillStyle = jacket;                          // torso, narrower than the stance
-    this.roundRect(-5.4, -5.2, 10.8, 10.4, 4.2);
+    this.roundRect(-5.4, -4.6, 10.8, 9.2, 4);
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,.45)';
     ctx.lineWidth = 1.1;
     ctx.stroke();
     ctx.fillStyle = shiftColor(jacket, -30);         // shaded back
-    this.roundRect(-5.2, -4.4, 2.8, 8.8, 2.2);
+    this.roundRect(-5.2, -3.9, 2.8, 7.8, 2.2);
     ctx.fill();
     ctx.restore();
 
     // --- upper body: arms, weapon, head and hat follow the aim
     ctx.save();
-    ctx.rotate(o.aim);
+    ctx.rotate(o.aim + (act ? act.recoil * 0.06 : 0));   // the shot kicks the aim up
     for (const side of [-1, 1]) {                    // shoulders
       ctx.fillStyle = shoulder;
       ctx.beginPath();
-      ctx.arc(0.2, side * 4.8, 2.8, 0, Math.PI * 2);
+      ctx.arc(0.2, side * 4.4, 2.8, 0, Math.PI * 2);
       ctx.fill();
     }
 
+    const recoil = act ? act.recoil * 2.8 : 0;
+    const punch = act ? act.punch : 0;
     const armSwing = stride * 3.8;
-    const hands = o.weapon > 0
-      ? [[9.8, -2.4], [8.4, 3.0]]                    // both hands on the weapon
-      : [[5.4 + armSwing, -6.6], [5.4 - armSwing, 6.6]];
+    let hands;
+    if (o.weapon > 0) {
+      hands = [[9.8 - recoil, -2.4], [8.4 - recoil, 3.0]];
+    } else if (punch > 0) {
+      // Alternating straight punches: one fist shoots out, the other guards.
+      const lead = act.hand < 0 ? 0 : 1;
+      hands = [[5.4 - armSwing, -6.3], [5.4 + armSwing, 6.3]];
+      hands[lead] = [5.4 + punch * 8.5, (lead ? 1 : -1) * (6.3 - punch * 4)];
+      hands[1 - lead] = [3.4, (lead ? -1 : 1) * 6.6];
+    } else {
+      hands = [[5.4 + armSwing, -6.3], [5.4 - armSwing, 6.3]];
+    }
+
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
-      this.limb(0.4, side * 4.8, hands[i][0], hands[i][1], 3.9, sleeve, 'rgba(0,0,0,.32)');
+      this.limb(0.4, side * 4.4, hands[i][0], hands[i][1], 3.9, sleeve, 'rgba(0,0,0,.32)');
     }
-    if (o.weapon > 0) this.drawHeldWeapon(o.weapon);
+    if (o.weapon > 0) {
+      ctx.save();
+      ctx.translate(-recoil, 0);
+      this.drawHeldWeapon(o.weapon);
+      ctx.restore();
+      if (act && act.flash > 0) this.drawMuzzleFlash(o.weapon, act.flash, recoil);
+    }
     ctx.fillStyle = o.skin;
     for (const h of hands) {
       ctx.beginPath();
@@ -417,6 +444,29 @@ export class Renderer {
       ctx.fill();
     }
     ctx.restore();
+    ctx.restore();
+  }
+
+  drawMuzzleFlash(kind, strength, recoil) {
+    const ctx = this.ctx;
+    const tip = { 1: 16.5, 2: 18.5, 3: 22.5, 4: 23.5 }[kind] - recoil;
+    const size = (kind === 4 ? 9 : kind === 3 ? 7 : 5) * (0.6 + strength * 0.6);
+    ctx.save();
+    ctx.translate(tip, kind === 4 ? 0 : -0.2);
+    ctx.globalAlpha = strength;
+    ctx.fillStyle = '#fff0b8';
+    ctx.beginPath();
+    ctx.moveTo(size, 0);
+    ctx.lineTo(0, -size * 0.55);
+    ctx.lineTo(size * 0.25, 0);
+    ctx.lineTo(0, size * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,170,60,.85)';
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.restore();
   }
 
@@ -480,10 +530,35 @@ export class Renderer {
     return { phase: g.phase, moving: moved > 0.06 };
   }
 
+  // A shot or a punch fired by this character – drives recoil, the muzzle
+  // flash and which fist swings forward.
+  markAction(key, kind) {
+    const prev = this.actions.get(key);
+    const hand = prev && prev.kind === 'punch' ? -prev.hand : 1;
+    this.actions.set(key, { kind, t: performance.now(), hand });
+  }
+
+  actionState(key) {
+    const a = this.actions.get(key);
+    if (!a) return null;
+    const age = (performance.now() - a.t) / 1000;
+    if (age > 0.32) { this.actions.delete(key); return null; }
+    if (a.kind === 'punch') {
+      const p = age < 0.08 ? age / 0.08 : Math.max(0, 1 - (age - 0.08) / 0.16);
+      return { punch: p, recoil: 0, flash: 0, hand: a.hand };
+    }
+    return {
+      punch: 0,
+      recoil: Math.max(0, 1 - age / 0.14),
+      flash: age < 0.05 ? 1 - age / 0.05 : 0,
+      hand: a.hand
+    };
+  }
+
   pruneGait() {
     if (this.gait.size < 400) return;
     for (const [key, g] of this.gait) {
-      if (this.frameNo - g.seen > 120) this.gait.delete(key);
+      if (this.frameNo - g.seen > 120) { this.gait.delete(key); this.actions.delete(key); }
     }
   }
 
@@ -494,7 +569,8 @@ export class Renderer {
       x: p.x, y: p.y, body: p.angle, aim: p.angle,
       phase: g.phase, moving: g.moving, scale: 0.95,
       jacket: look.shirt, trousers: look.trousers, shoes: look.shoes,
-      skin: look.skin, hat: look.hat, hatBrim: look.hatBrim, hair: look.hair, weapon: 0
+      skin: look.skin, hat: look.hat, hatBrim: look.hatBrim, hair: look.hair, weapon: 0,
+      action: this.actionState('n' + p.id)
     });
   }
 
@@ -506,9 +582,10 @@ export class Renderer {
       body: p.bodyAngle !== undefined ? p.bodyAngle : p.angle,
       aim: p.angle,
       phase: g.phase, moving: g.moving, scale: 1.15,
-      jacket, trousers: '#4a5468', shoes: '#15181e', skin: '#e8cba4',
+      jacket, trousers: '#616e8c', shoes: '#1b1f27', skin: '#e8cba4',
       hat: '#232936', hatBrim: '#171b24', hatBand: jacket, hair: '#3a2b20',
-      weapon: opts.weapon || 0, hit: opts.hit
+      weapon: opts.weapon || 0, hit: opts.hit,
+      action: this.actionState('p' + (p.id || 0))
     });
 
     if (opts.name) {

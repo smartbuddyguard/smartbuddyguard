@@ -123,6 +123,22 @@ input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 0; 
 #pauseStats td { padding: 7px 4px; border-bottom: 1px solid var(--line); }
 #pauseStats .num { text-align: right; color: var(--accent); font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
 
+.segs { display: flex; gap: 8px; }
+.seg {
+  flex: 1;
+  padding: 10px 8px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #0e121a;
+  color: var(--muted);
+  cursor: pointer;
+}
+.seg.sel { background: var(--accent); border-color: var(--accent); color: #17181c; }
+.hint { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+
 .modes { margin-top: 14px; text-align: center; font-size: 13px; }
 .modes a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed rgba(255,210,63,.5); }
 

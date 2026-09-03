@@ -5,6 +5,7 @@ import { Renderer } from './render.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
+import { Controls, loadScheme, mountSchemePicker } from './controls.js';
 import { World } from '/shared/world.js';
 import { SIM_DT, CAR_TYPES } from '/shared/constants.js';
 import { clamp, angleDiff } from '/shared/util.js';
@@ -54,6 +55,8 @@ if (!document.querySelector('meta[name="viewport"]')) {
 
 const sfx = new Sfx();
 const input = new Input(canvas);
+const controls = new Controls(loadScheme());
+mountSchemePicker(document.getElementById('scheme'), document.getElementById('schemeHint'), controls);
 
 let world = null;
 let player = null;
@@ -177,6 +180,7 @@ function togglePause() {
   pauseEl.classList.toggle('hidden', !paused);
   input.releaseAll();
   if (paused) {
+    mountSchemePicker(document.getElementById('pauseScheme'), document.getElementById('pauseSchemeHint'), controls);
     const y = state.you;
     pauseStats.innerHTML = y
       ? `<tr><td>Kills</td><td class="num">${y.k}</td></tr>` +
@@ -255,6 +259,9 @@ function consumeEvents() {
     switch (ev.t) {
       case 'shot':
         renderer.addTracer(ev.x0, ev.y0, ev.x1, ev.y1, ev.w);
+        if (Math.hypot(ev.x0 - player.x, ev.y0 - player.y) < 46) {
+          renderer.markAction('p' + ME, ev.w > 0 ? 'shoot' : 'punch');
+        }
         if (vol > 0.02) sfx.shot(ev.w, vol);
         break;
       case 'blood': renderer.addBlood(ev.x, ev.y, ev.big); break;
@@ -336,9 +343,19 @@ function frame(now) {
     fpsAcc = 0; fpsCount = 0;
   }
 
-  const inCar = !!player.carId;
-  const aim = computeAim();
-  const inp = input.sample(aim, inCar);
+  const car = player.carId ? world.cars.get(player.carId) : null;
+  const inCar = !!car;
+  const carFwd = car ? car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle) : 0;
+  const raw = input.sample(0, inCar);
+  const inp = controls.convert(raw, {
+    inCar,
+    carAngle: car ? car.angle : 0,
+    carFwd,
+    playerAngle: player.angle,
+    autoAim: computeAim(),
+    dt
+  });
+  const aim = inp.aim;
   if (state.invOpen) {                    // hands are busy rummaging
     inp.mx = 0; inp.my = 0; inp.fire = false; inp.enter = false; inp.swap = false;
   }
@@ -350,6 +367,8 @@ function frame(now) {
   while (acc >= SIM_DT && steps < 5) { world.step(SIM_DT); acc -= SIM_DT; steps++; }
   hurtFlash = Math.max(0, hurtFlash - dt);
   if (player.hp < prevHp - 0.5 && player.alive) { sfx.hurt(); hurtFlash = 0.25; }
+
+  if (controls.scheme === 'classic' && !car) player.angle = controls.heading;
 
   consumeEvents();
   buildEntityMap();
