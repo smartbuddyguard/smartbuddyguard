@@ -1,16 +1,16 @@
-// Authoritative game world. Everything that matters (players, traffic,
-// pedestrians, police, pickups, bullets) is simulated here; clients only
-// predict their own movement and render what the server tells them.
+// The game world. In multiplayer the server owns this simulation and clients
+// only predict their own movement; the offline/solo build runs exactly the
+// same class inside the browser. That is why it lives in shared/.
 
 import {
   CAR_TYPES, CAR_POLICE, WEAPONS, PLAYER_MAX_HP, PLAYER_RADIUS,
   RESPAWN_TIME, MAX_PEDS, MAX_TRAFFIC, MAX_POLICE, MAX_WANTED, WANTED_DECAY,
   CRIME_KILL_PED, CRIME_KILL_COP, CRIME_SHOOT, CRIME_RUNOVER, LANE_OFFSET, MAX_PARKED,
   P_PISTOL, P_UZI, P_SHOTGUN, P_ROCKET, P_HEALTH, P_ARMOUR, P_CASH, PICKUP_RESPAWN
-} from '../shared/constants.js';
-import { generateCity } from '../shared/city.js';
-import { stepPlayer, stepCar, carRadius, raycastTiles, resolveCircleTiles, clampToMap } from '../shared/physics.js';
-import { clamp, dist, dist2, angleDiff, makeRng } from '../shared/util.js';
+} from './constants.js';
+import { generateCity } from './city.js';
+import { stepPlayer, stepCar, carRadius, raycastTiles, resolveCircleTiles, clampToMap } from './physics.js';
+import { clamp, dist, dist2, angleDiff, makeRng } from './util.js';
 
 export class World {
   constructor(seed = (Math.random() * 1e9) | 0) {

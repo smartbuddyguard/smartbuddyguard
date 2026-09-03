@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
-import { World } from './world.js';
+import { World } from '../shared/world.js';
 import {
   SIM_DT, NET_HZ, VIEW_RADIUS, E_PLAYER, E_CAR, E_PED, E_PICKUP,
   CAR_TYPES, MAX_WANTED

@@ -10,6 +10,15 @@ keinerlei Originaldaten oder Assets von Rockstar/DMA verwendet.
 
 ---
 
+## Sofort spielen (ohne Server)
+
+`dist/liberty-solo.html` ist der **Einzelspieler-Modus als eine einzige HTML-Datei** –
+Stadt, Verkehr, Polizei, Waffen, Sound, alles darin, kein Server, kein Internet nötig.
+Datei aufs iPhone schicken (AirDrop, iCloud, Mail) und in Safari öffnen, oder am Rechner
+doppelklicken. Neu bauen mit `npm run build:solo`.
+
+Mit laufendem Server erreichbar unter `/solo.html`.
+
 ## Schnellstart
 
 ```bash
@@ -74,21 +83,25 @@ rastet leicht auf nahe Gegner ein. Am Desktop wird mit der Maus gezielt.
 
 ```
 server/index.js   HTTP-Static-Server + WebSocket-Server + Netzwerk-Loop
-server/world.js   Autoritative Simulation (Spieler, Verkehr, Passanten, Polizei, Pickups)
 shared/           Von Server UND Browser genutzte Module
+  world.js          Die Simulation (Spieler, Verkehr, Passanten, Polizei, Pickups) –
+                    im Multiplayer läuft sie auf dem Server, im Solo-Modus im Browser
   constants.js      Tuning-Werte (Tempo, Schaden, Dichte, Netzraten)
   city.js           Deterministischer Stadtgenerator (Seed -> identische Stadt)
   physics.js        Bewegung, Kollision, Raycasts
   util.js           Mathe + deterministischer PRNG
 public/           Client (ES-Module, keine Build-Tools nötig)
-  js/main.js        Loop, Prediction, Interpolation
+  js/main.js        Multiplayer-Loop, Prediction, Interpolation
+  js/solo.js        Einzelspieler-Loop (dieselbe Welt, lokal simuliert)
   js/net.js         WebSocket-Protokoll
   js/input.js       Touch-Controls + Tastatur/Maus
   js/render.js      Canvas-Renderer (Stadt, Fahrzeuge, Effekte, Minimap)
   js/hud.js         HUD, Minimap, Killfeed, Touch-Buttons
   js/audio.js       WebAudio-Synthesizer (Schüsse, Motor, Sirene – keine Sounddateien)
   sw.js             Service Worker (PWA / Offline-Shell)
-scripts/make-icons.mjs  Erzeugt die PWA-Icons als PNG ohne Fremdbibliothek
+  solo.html         Seite für den Einzelspieler-Modus
+scripts/make-icons.mjs   Erzeugt die PWA-Icons als PNG ohne Fremdbibliothek
+scripts/build-solo.mjs   Bündelt den Solo-Modus zu dist/liberty-solo.html (eine Datei)
 ```
 
 **Netcode:** Der Server simuliert die Welt autoritativ mit 30 Hz und verschickt 15 Snapshots
@@ -132,7 +145,9 @@ Der Health-Endpoint `GET /health` liefert Spielerzahl und Uptime.
 ## Entwicklung
 
 ```bash
-npm run dev     # Node --watch, startet den Server bei Änderungen neu
+npm run dev         # Node --watch, startet den Server bei Änderungen neu
+npm run build:solo  # baut dist/liberty-solo.html neu
+npm run icons       # erzeugt die PWA-Icons neu
 ```
 
 Der Client hat keinen Build-Schritt: Dateien in `public/` bearbeiten und neu laden.

@@ -178,7 +178,8 @@ export class Hud {
     ctx.textAlign = 'left';
     ctx.font = '500 11px ui-monospace, monospace';
     ctx.fillStyle = 'rgba(200,210,225,.5)';
-    ctx.fillText(`${state.ping} ms · ${state.fps} fps · ${state.playerCount} online`, 14 + s.left, h - 10 - s.bottom);
+    const label = state.netLabel || `${state.ping} ms · ${state.fps} fps · ${state.playerCount} online`;
+    ctx.fillText(label, 14 + s.left, h - 10 - s.bottom);
   }
 
   drawTouchControls(ctx, state) {

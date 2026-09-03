@@ -6,7 +6,9 @@
   "private": true,
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "build:solo": "node scripts/build-solo.mjs",
+    "icons": "node scripts/make-icons.mjs"
   },
   "engines": {
     "node": ">=18"
