@@ -7,6 +7,9 @@ import { initSidebar, renderChatList } from './chatlist.js';
 import { initChatView, openChat } from './chat.js';
 import { initComposer } from './composer.js';
 import { initDialogs, applyTheme, currentTheme } from './dialogs.js';
+import { initCalls } from './calls.js';
+import { initIdentity, publicKey } from './crypto.js';
+import { previewOf } from './decrypt.js';
 
 /* ------------------------------- Anmeldung ------------------------------ */
 let mode = 'login';
@@ -14,9 +17,8 @@ let mode = 'login';
 function setAuthMode(next) {
   mode = next;
   const register = mode === 'register';
-  $('#authTitle').textContent = register ? 'Konto anlegen' : 'Willkommen';
   $('#authSub').textContent = register
-    ? 'Wähle Name, Nummer und Passwort.'
+    ? 'Konto anlegen: Name, Nummer und Passwort wählen.'
     : 'Melde dich mit deiner Telefonnummer an.';
   $('#nameField').hidden = !register;
   $('#authSubmit').textContent = register ? 'Registrieren' : 'Anmelden';
@@ -85,7 +87,7 @@ function notify({ chatId, message, own }) {
   blip();
   if (Notification?.permission === 'granted') {
     const sender = getUser(message.senderId)?.name || chat.title;
-    const body = message.preview || message.text || 'Neue Nachricht';
+    const body = previewOf(message) || 'Neue Nachricht';
     const note = new Notification(chat.type === 'group' ? `${chat.title} · ${sender}` : sender, {
       body: body.slice(0, 120),
       tag: chatId,
@@ -97,13 +99,21 @@ function notify({ chatId, message, own }) {
 
 function updateTitle() {
   const count = totalUnread();
-  document.title = count > 0 ? `(${count}) TeleGroove` : 'TeleGroove';
+  document.title = count > 0 ? `(${count}) BuddyChat` : 'BuddyChat';
 }
 
 /* ------------------------------- App-Start ------------------------------ */
 async function startApp() {
   $('#auth').hidden = true;
   $('#app').hidden = false;
+
+  // Geräteschlüssel bereitstellen und den öffentlichen Teil veröffentlichen,
+  // damit andere den Chatschlüssel für uns verpacken können.
+  await initIdentity(state.me.id);
+  if (JSON.stringify(state.me.pub || null) !== JSON.stringify(publicKey())) {
+    await api.updateMe({ pub: publicKey() }).catch(() => {});
+    state.me = { ...state.me, pub: publicKey() };
+  }
 
   connect();
 
@@ -145,6 +155,7 @@ function init() {
   initChatView();
   initComposer();
   initDialogs();
+  initCalls();
 
   on('incoming', notify);
   on('chats', updateTitle);

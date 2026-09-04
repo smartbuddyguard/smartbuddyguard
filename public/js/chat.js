@@ -7,7 +7,9 @@ import {
   state, on, emit, getChat, getUser, getMessages, setMessages, putChat, putUsers, typingNames
 } from './state.js';
 import { api } from './api.js';
-import { sendRead, sendReaction, sendDelete } from './socket.js';
+import { sendRead, sendReaction, sendDelete, sendMessage, rekeyChat } from './socket.js';
+import { chatKey, hasKey, missingKey, unsealBytes, seal } from './crypto.js';
+import { decorateAll } from './decrypt.js';
 import { openMenu, closeModal, confirmDialog, openModal, openLightbox } from './ui.js';
 import { openReactionBar } from './emoji.js';
 import { statusCheck } from './chatlist.js';
@@ -16,6 +18,7 @@ import { openChatInfo, closeInfo } from './info.js';
 
 const GROUP_WINDOW = 5 * 60 * 1000; // Nachrichten innerhalb von 5 Minuten werden gebündelt
 const rows = new Map();             // messageId -> DOM-Knoten
+let playing = null;                 // gerade laufende Sprachnachricht
 
 let loadingHistory = false;
 let searchTerm = '';
@@ -40,9 +43,11 @@ export async function openChat(chatId, { focusMessageId = null } = {}) {
     try {
       const data = await api.messages(chatId, { limit: 80 });
       if (state.activeChatId !== chatId) return;
+      putUsers(data.members);
+      await chatKey(chatId);
+      await decorateAll(chatId, data.messages);
       setMessages(chatId, data.messages);
       if (!data.hasMore) state.fullyLoaded.add(chatId);
-      putUsers(data.members);
     } catch (err) {
       toast(err.message, 'error');
       return;
@@ -100,24 +105,42 @@ function isGrouped(previous, message) {
 }
 
 function attachmentNode(message) {
-  const a = message.attachment;
+  const a = message.body?.a;
   if (!a) return null;
 
+  const chatId = message.chatId;
+
   if (a.kind === 'image') {
-    return el('img', {
-      class: 'msg-image', src: a.url, alt: a.name || 'Bild', loading: 'lazy',
-      onclick: () => openLightbox(a.url, a.name)
+    const img = el('img', { class: 'msg-image', alt: a.name || 'Bild' });
+    blobUrl(chatId, a).then((url) => {
+      if (!url) return;
+      img.src = url;
+      img.onclick = () => openLightbox(url, a.name);
     });
+    return img;
   }
   if (a.kind === 'video') {
-    return el('video', { class: 'msg-video', src: a.url, controls: true, preload: 'metadata' });
+    const video = el('video', { class: 'msg-video', controls: true });
+    blobUrl(chatId, a).then((url) => { if (url) video.src = url; });
+    return video;
   }
-  if (a.kind === 'voice') return voiceNode(a);
+  if (a.kind === 'voice') return voiceNode(chatId, a);
   if (a.kind === 'audio') {
-    return el('audio', { src: a.url, controls: true, style: 'width:260px;max-width:100%;margin:2px 0' });
+    const audio = el('audio', { controls: true, style: 'width:260px;max-width:100%;margin:2px 0' });
+    blobUrl(chatId, a).then((url) => { if (url) audio.src = url; });
+    return audio;
   }
-  return el('a', {
-    class: 'msg-file', href: a.url, download: a.name, target: '_blank', rel: 'noopener'
+  const link = el('a', {
+    class: 'msg-file', href: '#', download: a.name, rel: 'noopener',
+    onclick: async (event) => {
+      event.preventDefault();
+      const url = await blobUrl(chatId, a);
+      if (!url) { toast('Die Datei ließ sich nicht entschlüsseln.', 'error'); return; }
+      const tmp = el('a', { href: url, download: a.name || 'datei' });
+      document.body.append(tmp);
+      tmp.click();
+      tmp.remove();
+    }
   }, [
     el('span', { class: 'file-icon', html: svg(ICONS.file, 22) }),
     el('span', {}, [
@@ -125,12 +148,32 @@ function attachmentNode(message) {
       el('div', { class: 'file-size', text: fileSize(a.size) })
     ])
   ]);
+  return link;
+}
+
+/** Verschlüsselte Datei vom Server holen, aufschließen und als Blob anbieten. */
+const blobCache = new Map();
+async function blobUrl(chatId, a) {
+  const key = a.url + '|' + a.iv;
+  if (blobCache.has(key)) return blobCache.get(key);
+  const job = (async () => {
+    try {
+      const res = await fetch(a.url);
+      if (!res.ok) return null;
+      const clear = await unsealBytes(chatId, a.iv, await res.arrayBuffer());
+      if (!clear) return null;
+      return URL.createObjectURL(new Blob([clear], { type: a.mime || 'application/octet-stream' }));
+    } catch { return null; }
+  })();
+  blobCache.set(key, job);
+  return job;
 }
 
 /** Sprachnachricht mit selbstgebautem Player und Balkenanzeige. */
-function voiceNode(attachment) {
-  const audio = new Audio(attachment.url);
+function voiceNode(chatId, attachment) {
+  const audio = new Audio();
   audio.preload = 'metadata';
+  let loaded = false;
 
   const bars = (attachment.peaks || defaultPeaks(attachment.url)).map((height) =>
     el('i', { style: `height:${Math.max(3, Math.round(height * 22))}px` })
@@ -145,10 +188,17 @@ function voiceNode(attachment) {
     bars.forEach((bar, i) => bar.classList.toggle('on', i / bars.length <= ratio));
   };
 
-  button.addEventListener('click', () => {
+  button.addEventListener('click', async () => {
+    if (!loaded) {
+      const url = await blobUrl(chatId, attachment);
+      if (!url) { toast('Die Sprachnachricht ließ sich nicht entschlüsseln.', 'error'); return; }
+      audio.src = url;
+      loaded = true;
+    }
     if (audio.paused) {
-      for (const other of document.querySelectorAll('audio')) other.pause();
-      audio.play();
+      if (playing && playing !== audio) playing.pause();
+      playing = audio;
+      audio.play().catch(() => {});
     } else audio.pause();
   });
   audio.addEventListener('play', () => { button.innerHTML = svg(ICONS.pause, 20); });
@@ -211,18 +261,20 @@ function messageRow(message, previous, next, chat) {
   }
 
   const own = message.senderId === state.me?.id;
+  const body = message.body;
+  const attachment = body?.a || null;
   const grouped = isGrouped(previous, message);
   const tail = !isGrouped(message, next);
   const sender = getUser(message.senderId);
-  const onlyMedia = !!message.attachment
-    && ['image', 'video'].includes(message.attachment.kind)
-    && !message.text;
+  const onlyMedia = !!attachment
+    && ['image', 'video'].includes(attachment.kind)
+    && !body?.t;
 
   const bubble = el('div', {
     class: [
       'bubble', own ? 'out' : 'in',
       tail ? 'tail' : '',
-      message.attachment ? 'media' : '',
+      attachment ? 'media' : '',
       onlyMedia ? 'only-media' : '',
       message.deleted ? 'deleted' : ''
     ].filter(Boolean).join(' ')
@@ -231,28 +283,31 @@ function messageRow(message, previous, next, chat) {
   if (!own && chat.type === 'group' && !grouped && !message.deleted) {
     bubble.append(el('div', { class: 'sender', style: `color:${sender?.color || 'var(--accent)'}`, text: sender?.name || 'Unbekannt' }));
   }
-  if (message.forwardedFrom) {
-    bubble.append(el('div', { class: 'forwarded', text: `Weitergeleitet von ${message.forwardedFrom}` }));
+  if (body?.f) {
+    bubble.append(el('div', { class: 'forwarded', text: `Weitergeleitet von ${body.f}` }));
   }
-  if (message.replyPreview) {
-    const quote = message.replyPreview;
+  if (body?.r) {
+    const quote = body.r;
     bubble.append(el('div', {
       class: 'reply-quote',
-      onclick: () => jumpTo(quote.id)
+      onclick: () => jumpTo(quote.to)
     }, [
       el('div', { class: 'q-author', text: quote.author }),
-      el('div', { class: 'q-text', text: quote.deleted ? 'Gelöschte Nachricht' : quote.text })
+      el('div', { class: 'q-text', text: quote.text || 'Nachricht' })
     ]));
   }
 
   if (message.deleted) {
     bubble.append(el('div', { class: 'text', text: 'Diese Nachricht wurde gelöscht' }));
+  } else if (!body) {
+    bubble.append(el('div', { class: 'text', style: 'opacity:.7', text: '🔒 Verschlüsselt – Schlüssel fehlt noch' }));
   } else {
+    if (body.c) bubble.append(callLogNode(body.c));
     const media = attachmentNode(message);
     if (media) bubble.append(media);
-    if (message.text) {
-      const cls = `text${isEmojiOnly(message.text) && !message.attachment ? ' emoji-only' : ''}`;
-      bubble.append(el('div', { class: cls, html: searchTerm ? highlightIn(message.text) : richText(message.text) }));
+    if (body.t) {
+      const cls = `text${isEmojiOnly(body.t) && !attachment ? ' emoji-only' : ''}`;
+      bubble.append(el('div', { class: cls, html: searchTerm ? highlightIn(body.t) : richText(body.t) }));
     }
   }
 
@@ -285,6 +340,22 @@ function messageRow(message, previous, next, chat) {
   return row;
 }
 
+function callLogNode(call) {
+  const label = call.missed
+    ? 'Verpasster Anruf'
+    : (call.kind === 'video' ? 'Videoanruf' : 'Sprachanruf');
+  const sub = call.missed
+    ? (call.kind === 'video' ? 'Videoanruf' : 'Sprachanruf')
+    : 'Dauer ' + duration(call.sec || 0);
+  return el('div', { class: 'call-log' }, [
+    el('span', { class: 'ci', html: svg(call.kind === 'video' ? ICONS.videocam : ICONS.phone, 18) }),
+    el('span', {}, [
+      el('div', { class: 'cl', text: label }),
+      el('div', { class: 'cs', text: sub })
+    ])
+  ]);
+}
+
 function highlightIn(text) {
   const safe = richText(text);
   if (!searchTerm) return safe;
@@ -300,11 +371,44 @@ export function renderMessages() {
   rows.clear();
 
   if (messages.length === 0) {
-    box.replaceChildren(el('div', { class: 'list-empty', text: 'Noch keine Nachrichten. Schreib die erste!' }));
+    box.replaceChildren(
+      el('div', { class: 'enc-wrap' }, [el('div', { class: 'enc-note' }, [
+        el('span', { html: svg(ICONS.lock, 14) }),
+        'Nachrichten, Sprachnachrichten und Dateien sind Ende-zu-Ende verschlüsselt.'
+      ])]),
+      el('div', { class: 'list-empty', text: 'Noch keine Nachrichten. Schreib die erste!' })
+    );
     return;
   }
 
-  const nodes = [];
+  const nodes = [el('div', { class: 'enc-wrap' }, [el('div', { class: 'enc-note' }, [
+    el('span', { html: svg(ICONS.lock, 14) }),
+    'Nachrichten, Sprachnachrichten und Dateien sind Ende-zu-Ende verschlüsselt.'
+  ])])];
+  if (missingKey(chat.id) && !hasKey(chat.id)) {
+    const note = el('span', {
+      text: 'Warte auf den Chatschlüssel — sobald ein anderes Mitglied online ist, wird der Verlauf lesbar.'
+    });
+    if (chat.ownerId === state.me?.id) {
+      note.append(el('br'), el('button', {
+        class: 'btn-text',
+        style: 'color:#fff;text-transform:none;letter-spacing:0;padding:4px 0',
+        text: 'Chat neu verschlüsseln',
+        onclick: () => confirmDialog({
+          title: 'Chat neu verschlüsseln?',
+          text: 'Alle bekommen einen frischen Schlüssel und können ab sofort wieder mitlesen. '
+            + 'Ältere Nachrichten bleiben mit dem alten Schlüssel verschlüsselt.',
+          confirmLabel: 'Neu verschlüsseln',
+          onConfirm: async () => {
+            await rekeyChat(chat);
+            renderMessages();
+            toast('Neuer Schlüssel verteilt.');
+          }
+        })
+      }));
+    }
+    nodes.push(el('div', { class: 'system-msg' }, [note]));
+  }
   if (!state.fullyLoaded.has(chat.id)) {
     nodes.push(el('div', { class: 'list-empty' }, [
       el('button', { class: 'btn-text', text: 'Ältere Nachrichten laden', onclick: loadOlder })
@@ -377,6 +481,7 @@ async function loadOlder() {
   try {
     const oldest = getMessages(chat.id)[0];
     const data = await api.messages(chat.id, { before: oldest?.ts || Date.now(), limit: 60 });
+    await decorateAll(chat.id, data.messages);
     setMessages(chat.id, data.messages, { prepend: true });
     if (!data.hasMore) state.fullyLoaded.add(chat.id);
     renderMessages();
@@ -407,8 +512,9 @@ function messageMenu(event, message, chat) {
   const items = [
     { label: 'Antworten', icon: ICONS.reply, onClick: () => startReply(message) },
     { label: 'Weiterleiten', icon: ICONS.forward, onClick: () => forwardDialog(message) },
-    message.text ? { label: 'Text kopieren', icon: ICONS.copy, onClick: () => copyText(message.text) } : null,
-    own && !message.attachment ? { label: 'Bearbeiten', icon: ICONS.edit, onClick: () => startEdit(message) } : null,
+    message.body?.t ? { label: 'Text kopieren', icon: ICONS.copy, onClick: () => copyText(message.body.t) } : null,
+    own && message.body?.t && !message.body?.a && !message.body?.c
+      ? { label: 'Bearbeiten', icon: ICONS.edit, onClick: () => startEdit(message) } : null,
     (own || chat.ownerId === state.me?.id) ? 'sep' : null,
     (own || chat.ownerId === state.me?.id) ? {
       label: 'Löschen', icon: ICONS.trash, danger: true,
@@ -445,15 +551,16 @@ function forwardDialog(message) {
     el('div', { class: 'pick-list' }, chats.map((chat) => el('div', {
       class: 'pick-item',
       onclick: async () => {
-        const { sendMessage } = await import('./socket.js');
-        sendMessage({
-          chatId: chat.id,
-          text: message.text,
-          attachment: message.attachment,
-          forwardedFrom: author
-        });
-        closeModal();
-        toast(`Weitergeleitet an ${chat.title}`);
+        try {
+          if (!await chatKey(chat.id)) { toast('Für diesen Chat fehlt noch der Schlüssel.', 'error'); return; }
+          const body = { t: message.body?.t || '', f: author };
+          if (message.body?.a) body.a = message.body.a;
+          sendMessage({ chatId: chat.id, enc: await seal(chat.id, body) });
+          closeModal();
+          toast(`Weitergeleitet an ${chat.title}`);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
       }
     }, [
       avatarEl({ ...chat, online: chat.peer?.online }, 'avatar-sm'),

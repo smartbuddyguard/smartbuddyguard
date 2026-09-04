@@ -2,7 +2,7 @@
 // Aufruf: npm run seed   (der Server darf dabei nicht laufen)
 import { db, saveSync } from '../server/store.js';
 import { hashPassword } from '../server/auth.js';
-import { createUser, createPrivateChat, createGroupChat, addMessage, systemMessage } from '../server/model.js';
+import { createUser, createPrivateChat, createGroupChat, systemMessage } from '../server/model.js';
 
 const PASSWORD = 'demo1234';
 
@@ -35,43 +35,17 @@ for (const owner of users) {
   }
 }
 
-const minutes = (n) => Date.now() - n * 60000;
-
-const privateChat = createPrivateChat(anna.id, ben.id);
-const conversation = [
-  [ben, 'Hey Anna! Läuft der neue Messenger schon?', 48],
-  [anna, 'Klar 🙂 Gruppen, Sprachnachrichten und Lesebestätigungen sind drin.', 46],
-  [ben, 'Und Dateien?', 45],
-  [anna, 'Auch. Einfach reinziehen oder auf die Büroklammer tippen.', 44],
-  [ben, 'Stark. Dann verschieben wir das Meeting auf morgen 10 Uhr?', 12],
-  [anna, 'Passt! Ich lege gleich eine Gruppe an. 👍', 10]
-];
-for (const [sender, text, ago] of conversation) {
-  const message = addMessage(privateChat, sender.id, { text });
-  message.ts = minutes(ago);
-  message.readBy = [anna.id, ben.id];
-  message.deliveredTo = [anna.id, ben.id];
-}
-privateChat.lastMessageAt = minutes(10);
-
+// Beispielnachrichten kann dieses Skript nicht anlegen: Inhalte werden erst
+// im Browser verschlüsselt, und den Chatschlüssel gibt es nur dort. Angelegt
+// werden Konten, Kontakte und die leeren Chats.
+createPrivateChat(anna.id, ben.id);
 const group = createGroupChat(anna.id, [ben.id, clara.id], 'Projekt Nordlicht');
-const created = systemMessage(group, `${anna.name} hat die Gruppe „Projekt Nordlicht“ erstellt`);
-created.ts = minutes(40);
-const groupTalk = [
-  [anna, 'Willkommen! Hier sammeln wir alles zum Release.', 38],
-  [clara, 'Super. Ich bringe die Screenshots mit.', 30],
-  [ben, 'Und ich kümmere mich um die Testkonten.', 22]
-];
-for (const [sender, text, ago] of groupTalk) {
-  const message = addMessage(group, sender.id, { text });
-  message.ts = minutes(ago);
-  message.readBy = [sender.id];
-  message.deliveredTo = [sender.id];
-}
-group.lastMessageAt = minutes(22);
+systemMessage(group, `${anna.name} hat die Gruppe „Projekt Nordlicht“ erstellt`);
 
 db.messages.sort((a, b) => a.ts - b.ts);
 saveSync();
 
 console.log('Demodaten angelegt. Anmelden mit dem Passwort:', PASSWORD);
 for (const person of PEOPLE) console.log(`  ${person.phone}  –  ${person.name}`);
+console.log(`\nAngelegt: ein Einzelchat (${anna.name} ↔ ${ben.name}) und die Gruppe „${group.title}“.`);
+console.log('Nachrichten schreibt ihr im Browser — verschlüsselt werden sie dort.');

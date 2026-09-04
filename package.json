@@ -1,14 +1,13 @@
 {
-  "name": "telegroove",
+  "name": "buddychat",
   "version": "1.0.0",
-  "description": "WhatsApp-Klon im Telegram-Design: Echtzeit-Messenger mit Gruppen, Medien, Sprachnachrichten und Lesebestätigungen. Läuft ohne npm-Abhängigkeiten.",
+  "description": "BuddyChat by Smartbuddyguard: Ende-zu-Ende verschlüsselter Messenger im Telegram-Design mit Gruppen, Sprachnachrichten und Videoanrufen. Läuft ohne npm-Abhängigkeiten.",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "seed": "node scripts/seed.mjs",
-    "icons": "node scripts/make-icons.mjs"
+    "seed": "node scripts/seed.mjs"
   },
   "engines": {
     "node": ">=18"

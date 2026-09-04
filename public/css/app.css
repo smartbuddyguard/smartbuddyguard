@@ -191,8 +191,22 @@ input, textarea { font: inherit; color: inherit; }
   text-align: center;
   animation: rise .35s ease both;
 }
-.auth-logo { margin-bottom: 18px; }
-.auth h1 { margin: 0 0 8px; font-size: 30px; font-weight: 600; letter-spacing: -.01em; }
+.auth-logo { margin-bottom: 16px; }
+.brand-mark {
+  display: block;
+  border-radius: 22%;
+  background: #07060d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 6px 22px rgba(160, 60, 220, .35);
+}
+.auth-logo .brand-mark { width: 120px; height: 120px; margin: 0 auto; }
+.brand-by {
+  margin: 4px 0 22px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.auth h1 { margin: 0 0 2px; font-size: 30px; font-weight: 600; letter-spacing: -.01em; }
 .auth-sub { margin: 0 0 28px; color: var(--text-2); font-size: 15px; }
 
 .field { position: relative; display: block; margin-bottom: 14px; text-align: left; }
@@ -1282,4 +1296,159 @@ mark { background: rgba(51, 144, 236, .28); color: inherit; border-radius: 3px; 
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* ========================================================================
+   Verschlüsselung, Anrufe und Anruf-Einträge
+   ======================================================================== */
+.enc-wrap { display: flex; justify-content: center; margin: 12px 0; }
+.enc-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(92%, 480px);
+  padding: 6px 13px;
+  border-radius: 14px;
+  background: var(--pill);
+  color: #fff;
+  font-size: 12.5px;
+  text-align: center;
+}
+.enc-note svg { width: 14px; height: 14px; flex: 0 0 auto; }
+
+.safety {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  letter-spacing: .06em;
+  line-height: 1.9;
+  word-spacing: .5em;
+}
+
+.call-log { display: flex; align-items: center; gap: 9px; }
+.call-log .ci {
+  display: grid;
+  place-items: center;
+  width: 34px; height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(51, 144, 236, .16);
+  color: var(--accent);
+}
+.call-log .cl { font-size: 14.5px; }
+.call-log .cs { font-size: 12.5px; color: var(--text-2); }
+.bubble.out .call-log .cs { color: var(--bubble-out-meta); }
+
+/* Vollbild-Anruf */
+.call {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  background: #0b0d12;
+  color: #fff;
+}
+.call-stage { position: relative; flex: 1 1 auto; min-height: 0; background: #06070a; overflow: hidden; }
+.call-remote { display: block; width: 100%; height: 100%; object-fit: cover; background: #06070a; }
+.call-self {
+  position: absolute;
+  right: 16px; bottom: 16px;
+  width: 172px;
+  max-width: 34vw;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #11131a;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .55);
+  transform: scaleX(-1);
+}
+.call-idle {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.call-name { font-size: 22px; font-weight: 600; }
+.call-state { color: #9aa4b2; font-size: 15px; }
+.call-timer { color: #9aa4b2; font-variant-numeric: tabular-nums; }
+.call-top {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: linear-gradient(rgba(0, 0, 0, .6), transparent);
+  pointer-events: none;
+}
+.call-top .peer { font-weight: 600; font-size: 16px; }
+.call-top .clock { color: #cfd6e0; font-variant-numeric: tabular-nums; }
+.call-top .lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: #cfd6e0;
+  font-size: 12.5px;
+}
+.call-bar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  padding: 18px;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+  background: #0b0d12;
+}
+.call-btn {
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  transition: background .15s, transform .12s;
+}
+.call-btn:hover { background: rgba(255, 255, 255, .2); }
+.call-btn:active { transform: scale(.94); }
+.call-btn.off { background: #fff; color: #11131a; }
+.call-btn.hang { background: var(--danger); }
+
+/* Eingehender Anruf */
+.ring {
+  position: fixed;
+  left: 50%; top: 18px;
+  transform: translateX(-50%);
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px 12px 16px;
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-3);
+  animation: ring-in .25s ease both;
+}
+@keyframes ring-in {
+  from { opacity: 0; transform: translate(-50%, -14px); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+.ring .who { font-weight: 600; }
+.ring .what { font-size: 13px; color: var(--text-2); }
+.ring-btn {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.ring-btn.yes { background: #2fb14a; animation: ring-pulse 1.4s infinite; }
+.ring-btn.no { background: var(--danger); }
+@keyframes ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47, 177, 74, .5); }
+  50% { box-shadow: 0 0 0 10px rgba(47, 177, 74, 0); }
 }

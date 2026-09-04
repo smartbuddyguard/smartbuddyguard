@@ -3,6 +3,10 @@ import { getToken } from './api.js';
 import {
   state, emit, putChat, putMessage, putUsers, removeChat, setTyping, getMessages
 } from './state.js';
+import {
+  setKeyHooks, unwrapChatKey, wrapChatKeyFor, createChatKey, chatKey, hasKey, publicKey
+} from './crypto.js';
+import { decorate, redecrypt } from './decrypt.js';
 
 let socket = null;
 let retries = 0;
@@ -74,46 +78,71 @@ function handle(msg) {
       for (const chat of msg.chats) putChat(chat);
       emit('me');
       emit('ready');
+      for (const chat of msg.chats) ensureKey(chat);
       return;
     }
 
     case 'message': {
-      const chat = state.chats.get(msg.chatId);
-      const isOwn = msg.message.senderId === state.me?.id;
-      // Nur einsortieren, wenn der Verlauf bereits im Speicher liegt.
-      if (state.messages.has(msg.chatId) || state.activeChatId === msg.chatId) {
-        putMessage(msg.chatId, msg.message, msg.tempId);
-      }
-      if (chat) {
-        const unread = isOwn || state.activeChatId === msg.chatId ? (isOwn ? 0 : chat.unread) : (chat.unread || 0) + 1;
-        putChat({
-          ...chat,
-          lastMessage: { ...msg.message, preview: previewOf(msg.message) },
-          lastMessageAt: msg.message.ts,
-          unread: Math.max(0, unread)
-        });
-      } else {
-        emit('chat:unknown', msg.chatId);
-      }
-      setTyping(msg.chatId, msg.message.senderId, '', false);
-      emit('incoming', { chatId: msg.chatId, message: msg.message, own: isOwn });
+      decorate(msg.chatId, msg.message).then(() => {
+        const chat = state.chats.get(msg.chatId);
+        const isOwn = msg.message.senderId === state.me?.id;
+        // Nur einsortieren, wenn der Verlauf bereits im Speicher liegt.
+        if (state.messages.has(msg.chatId) || state.activeChatId === msg.chatId) {
+          putMessage(msg.chatId, msg.message, msg.tempId);
+        }
+        if (chat) {
+          const unread = isOwn || state.activeChatId === msg.chatId ? (isOwn ? 0 : chat.unread) : (chat.unread || 0) + 1;
+          putChat({
+            ...chat,
+            lastMessage: msg.message,
+            lastMessageAt: msg.message.ts,
+            unread: Math.max(0, unread)
+          });
+        } else {
+          emit('chat:unknown', msg.chatId);
+        }
+        setTyping(msg.chatId, msg.message.senderId, '', false);
+        emit('incoming', { chatId: msg.chatId, message: msg.message, own: isOwn });
+      });
       return;
     }
 
     case 'message:update': {
-      if (state.messages.has(msg.chatId)) putMessage(msg.chatId, msg.message);
-      const chat = state.chats.get(msg.chatId);
-      if (chat?.lastMessage?.id === msg.message.id) {
-        putChat({ ...chat, lastMessage: { ...msg.message, preview: previewOf(msg.message) } });
-      }
+      decorate(msg.chatId, msg.message).then(() => {
+        if (state.messages.has(msg.chatId)) putMessage(msg.chatId, msg.message);
+        const chat = state.chats.get(msg.chatId);
+        if (chat?.lastMessage?.id === msg.message.id) {
+          putChat({ ...chat, lastMessage: msg.message });
+        }
+      });
+      return;
+    }
+
+    // --- Schlüsseltausch --------------------------------------------------
+    case 'key:request': {
+      // Wer den Schlüssel hat, packt ihn für die anfragende Person ein.
+      if (!hasKey(msg.chatId) || msg.userId === state.me?.id || !msg.pub) return;
+      wrapChatKeyFor(msg.chatId, msg.userId, msg.pub).then((box) => {
+        if (box) send({ t: 'key:deliver', chatId: msg.chatId, toUserId: msg.userId, box });
+      });
+      return;
+    }
+
+    case 'key:new': {
+      adoptKey(msg.chatId, msg.box).then((ok) => { if (ok) redecrypt(msg.chatId); });
       return;
     }
 
     case 'chat': {
       putChat(msg.chat);
       if (msg.members) putUsers(msg.members);
+      ensureKey(msg.chat);
       return;
     }
+
+    case 'call':
+      emit('call:signal', msg);
+      return;
 
     case 'chat:removed':
       removeChat(msg.chatId);
@@ -189,21 +218,78 @@ function handle(msg) {
   }
 }
 
-function previewOf(message) {
-  if (message.deleted) return 'Diese Nachricht wurde gelöscht';
-  if (message.attachment) {
-    const labels = { image: '📷 Foto', video: '🎬 Video', voice: '🎤 Sprachnachricht', audio: '🎵 Audio', file: '📎 Datei' };
-    const label = labels[message.attachment.kind] || '📎 Anhang';
-    return message.text ? `${label} ${message.text}` : label;
-  }
-  return message.text;
+/** Verpackten Chatschlüssel auspacken, wenn der Absender bekannt ist. */
+async function adoptKey(chatId, box) {
+  if (!box || hasKey(chatId)) return false;
+  const sender = state.users.get(box.from);
+  if (!sender?.pub) return false;
+  return !!(await unwrapChatKey(chatId, box, sender.pub));
 }
+
+/** Beim Eintreffen eines Chats: Schlüssel übernehmen, anlegen oder anfragen. */
+export async function ensureKey(chat) {
+  if (!chat || hasKey(chat.id)) return;
+  if (chat.myKey && await adoptKey(chat.id, chat.myKey)) {
+    redecrypt(chat.id);
+    return;
+  }
+  // Chat ohne jeden Schlüssel (z. B. serverseitig angelegt): der Ersteller
+  // legt ihn an. Nur er, damit nicht zwei Geräte verschiedene Schlüssel bauen.
+  if ((chat.keyOwners || []).length === 0 && chat.ownerId === state.me?.id) {
+    await provisionChatKey(chat);
+    return;
+  }
+  await chatKey(chat.id);
+}
+
+/**
+ * Chat neu verschlüsseln. Nötig, wenn niemand mehr an den alten Schlüssel
+ * kommt — etwa nach dem Leeren des Browserspeichers. Ältere Nachrichten
+ * bleiben mit dem alten Schlüssel verschlüsselt.
+ */
+export async function rekeyChat(chat) {
+  await provisionChatKey(chat, [], { force: true });
+}
+
+/** Den vorhandenen Chatschlüssel an weitere Mitglieder weitergeben. */
+export async function shareChatKey(chatId, userIds, members = []) {
+  if (!hasKey(chatId)) return;
+  for (const uid of userIds) {
+    const user = state.users.get(uid) || members.find((m) => m.id === uid);
+    if (!user?.pub) continue;
+    const box = await wrapChatKeyFor(chatId, uid, user.pub);
+    if (box) send({ t: 'key:deliver', chatId, toUserId: uid, box });
+  }
+}
+
+/**
+ * Für einen frisch angelegten Chat einen Schlüssel erzeugen und ihn für jedes
+ * Mitglied verpacken. Der Server speichert nur die Pakete.
+ */
+export async function provisionChatKey(chat, members = [], { force = false } = {}) {
+  if (!chat || (hasKey(chat.id) && !force)) return;
+  await createChatKey(chat.id);
+  const ids = new Set([...(chat.memberIds || []), ...members.map((m) => m.id)]);
+  for (const uid of ids) {
+    const user = state.users.get(uid) || members.find((m) => m.id === uid);
+    if (!user?.pub) continue;
+    const box = await wrapChatKeyFor(chat.id, uid, user.pub);
+    if (box) send({ t: 'key:deliver', chatId: chat.id, toUserId: uid, box });
+  }
+}
+
+setKeyHooks({
+  request: (chatId) => send({ t: 'key:request', chatId })
+});
+
+export { publicKey };
 
 // Bequeme Kurzbefehle
 export const sendMessage = (payload) => send({ t: 'message:send', ...payload });
+export const sendCall = (payload) => send({ t: 'call', ...payload });
 export const sendTyping = (chatId, active) => send({ t: 'typing', chatId, state: active });
 export const sendRead = (chatId, ts) => send({ t: 'read', chatId, ts });
-export const sendEdit = (id, text) => send({ t: 'message:edit', id, text });
+export const sendEdit = (id, enc) => send({ t: 'message:edit', id, enc });
 export const sendDelete = (id) => send({ t: 'message:delete', id });
 export const sendReaction = (id, emoji) => send({ t: 'message:react', id, emoji });
 export const sendDraft = (chatId, text) => send({ t: 'draft', chatId, text });

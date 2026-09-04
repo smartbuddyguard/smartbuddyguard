@@ -3,6 +3,8 @@ import { $, el, svg, ICONS, avatarEl, lastSeenLabel, toast } from './util.js';
 import { state, getUser, getMessages, putChat, putUsers, removeChat } from './state.js';
 import { api } from './api.js';
 import { openModal, confirmDialog, openLightbox, fieldInput } from './ui.js';
+import { shareChatKey } from './socket.js';
+import { safetyNumber } from './crypto.js';
 
 export function closeInfo() {
   const panel = $('#infoPanel');
@@ -53,6 +55,7 @@ export function openChatInfo(chat) {
     if (peer.about) details.append(infoRow(ICONS.info, peer.about, 'Info'));
     const known = !!chat.contactName;
     details.append(infoRow(ICONS.users, known ? 'Kontakt bearbeiten' : 'Zu Kontakten hinzufügen', 'Adressbuch', () => contactDialog(peer)));
+    details.append(infoRow(ICONS.shield, 'Sicherheitsnummer', 'Verschlüsselung prüfen', () => safetyDialog(chat, peer)));
   } else {
     details.append(infoRow(ICONS.users, `${chat.memberIds.length} Mitglieder`, 'Gruppe'));
     if (chat.ownerId === state.me?.id) {
@@ -153,6 +156,23 @@ async function copy(text) {
   try { await navigator.clipboard.writeText(text); toast('Kopiert'); } catch { /* egal */ }
 }
 
+async function safetyDialog(chat, peer) {
+  const number = peer?.pub ? await safetyNumber(peer.pub) : null;
+  openModal({
+    title: 'Sicherheitsnummer',
+    body: el('div', {}, [
+      el('p', {
+        text: number
+          ? `Vergleicht diese Zahl mit ${peer.name} über einen anderen Weg — Telefon oder persönlich. Stimmt sie auf beiden Geräten überein, hört niemand mit.`
+          : `${peer?.name || 'Diese Person'} hat noch keinen Geräteschlüssel veröffentlicht.`
+      }),
+      number ? el('div', { class: 'safety', text: number }) : null,
+      el('p', { text: 'Die Zahl ändert sich, wenn eine Seite sich auf einem neuen Gerät anmeldet.' })
+    ]),
+    actions: [{ label: 'Schließen' }]
+  });
+}
+
 function contactDialog(user) {
   const { field, input } = fieldInput('Name im Adressbuch', user.name);
   openModal({
@@ -234,8 +254,9 @@ async function addMembersDialog(chat) {
           if (chosen.size === 0) return false;
           try {
             const data = await api.updateChat(chat.id, { addMembers: [...chosen] });
-            putChat(data.chat);
             putUsers(data.members);
+            putChat(data.chat);
+            await shareChatKey(chat.id, [...chosen], data.members);
             openChatInfo(data.chat);
           } catch (err) { toast(err.message, 'error'); return false; }
         }

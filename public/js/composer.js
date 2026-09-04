@@ -3,6 +3,7 @@ import { $, el, svg, ICONS, toast, fileSize, duration } from './util.js';
 import { state, getChat, putMessage } from './state.js';
 import { api } from './api.js';
 import { sendMessage, sendTyping, sendEdit, sendDraft } from './socket.js';
+import { seal, sealBytes, chatKey } from './crypto.js';
 import { openEmojiPanel } from './emoji.js';
 
 let currentChatId = null;
@@ -45,7 +46,8 @@ export function startReply(message) {
     ? 'Du'
     : (state.users.get(message.senderId)?.name || 'Unbekannt');
   $('#replyAuthor').textContent = author;
-  $('#replyText').textContent = message.text || (message.attachment ? message.attachment.name || 'Anhang' : '');
+  $('#replyText').textContent = message.body?.t
+    || (message.body?.a ? message.body.a.name || 'Anhang' : 'Nachricht');
   $('#replyBar').hidden = false;
   focusComposer();
 }
@@ -116,8 +118,14 @@ export async function addFiles(files) {
     renderAttachments();
     updateSendMode();
     try {
-      const result = await api.upload(file);
-      Object.assign(item, { url: result.url, uploading: false, size: result.size });
+      if (!await chatKey(currentChatId)) throw new Error('Für diesen Chat fehlt noch der Schlüssel.');
+      const boxed = await sealBytes(currentChatId, new Uint8Array(await file.arrayBuffer()));
+      const blob = new Blob([boxed.bytes], { type: 'application/octet-stream' });
+      const result = await api.upload(blob, file.name);
+      Object.assign(item, {
+        url: result.url, uploading: false, size: file.size,
+        iv: boxed.iv, mime: file.type || 'application/octet-stream'
+      });
     } catch (err) {
       toast(err.message, 'error');
       pending = pending.filter((x) => x !== item);
@@ -139,27 +147,19 @@ function autoGrow() {
   box.style.height = Math.min(box.scrollHeight, 180) + 'px';
 }
 
-function optimistic(chatId, payload) {
+function optimistic(chatId, body) {
   const tempId = 'tmp_' + Math.random().toString(36).slice(2);
-  const reply = state.replyTo;
   putMessage(chatId, {
     id: tempId,
     chatId,
     senderId: state.me.id,
-    text: payload.text || '',
     ts: Date.now(),
     editedAt: 0,
     deleted: false,
     system: false,
-    replyTo: payload.replyTo || null,
-    replyPreview: reply ? {
-      id: reply.id,
-      author: reply.senderId === state.me.id ? state.me.name : (state.users.get(reply.senderId)?.name || 'Unbekannt'),
-      text: reply.text || '',
-      deleted: false
-    } : null,
-    forwardedFrom: null,
-    attachment: payload.attachment || null,
+    enc: null,
+    body,
+    call: null,
     reactions: {},
     readBy: [state.me.id],
     deliveredTo: [state.me.id],
@@ -168,17 +168,40 @@ function optimistic(chatId, payload) {
   return tempId;
 }
 
-export function submit() {
+/** Zitat-Vorschau für eine Antwort zusammenstellen. */
+function replyBlock() {
+  const reply = state.replyTo;
+  if (!reply) return null;
+  return {
+    to: reply.id,
+    author: reply.senderId === state.me.id
+      ? state.me.name
+      : (state.users.get(reply.senderId)?.name || 'Unbekannt'),
+    text: (reply.body?.t || (reply.body?.a ? reply.body.a.name || 'Anhang' : '')).slice(0, 120)
+  };
+}
+
+export async function submit() {
   const chatId = currentChatId;
   if (!chatId) return;
   const text = input().value.trim();
 
+  if (!await chatKey(chatId)) {
+    toast('Für diesen Chat fehlt noch der Schlüssel — kurz warten.', 'error');
+    return;
+  }
+
   if (state.editing) {
-    if (text && text !== state.editing.text) sendEdit(state.editing.id, text);
+    const target = state.editing;
+    const next = { ...target.body, t: text };
     cancelReply();
     input().value = '';
     autoGrow();
     updateSendMode();
+    if (text && text !== target.body?.t) {
+      try { sendEdit(target.id, await seal(chatId, next)); }
+      catch (err) { toast(err.message, 'error'); }
+    }
     return;
   }
 
@@ -186,22 +209,17 @@ export function submit() {
   if (!text && ready.length === 0) return;
   if (pending.some((p) => p.uploading)) { toast('Ein Anhang lädt noch hoch …'); return; }
 
-  const replyTo = state.replyTo?.id || null;
-  if (ready.length) {
-    ready.forEach((item, index) => {
-      const attachment = { kind: item.kind, url: item.url, name: item.name, size: item.size, duration: item.duration };
-      const payload = {
-        chatId,
-        text: index === 0 ? text : '',
-        replyTo: index === 0 ? replyTo : null,
-        attachment
-      };
-      sendMessage({ ...payload, tempId: optimistic(chatId, payload) });
-    });
-  } else {
-    const payload = { chatId, text, replyTo };
-    sendMessage({ ...payload, tempId: optimistic(chatId, payload) });
-  }
+  const reply = replyBlock();
+  const bodies = ready.length
+    ? ready.map((item, index) => ({
+        t: index === 0 ? text : '',
+        r: index === 0 ? reply : null,
+        a: {
+          kind: item.kind, url: item.url, name: item.name, size: item.size,
+          iv: item.iv, mime: item.mime, duration: item.duration, peaks: item.peaks
+        }
+      }))
+    : [{ t: text, r: reply }];
 
   input().value = '';
   clearAttachments();
@@ -212,6 +230,16 @@ export function submit() {
   typingSentAt = 0;
   const chat = getChat(chatId);
   if (chat?.draft) { chat.draft = ''; sendDraft(chatId, ''); }
+
+  for (const body of bodies) {
+    const clean = Object.fromEntries(Object.entries(body).filter(([, v]) => v != null));
+    try {
+      const tempId = optimistic(chatId, clean);
+      sendMessage({ chatId, enc: await seal(chatId, clean), tempId });
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
 }
 
 /* --------------------------- Sprachnachrichten -------------------------- */
@@ -251,17 +279,24 @@ function stopRecording(send) {
     const blob = new Blob(recordChunks, { type: recorder?.mimeType || 'audio/webm' });
     recordChunks = [];
     recorder = null;
+    const chatId = currentChatId;
     try {
-      const file = new File([blob], `sprachnachricht-${Date.now()}.webm`, { type: blob.type });
-      const result = await api.upload(file);
-      const chatId = currentChatId;
-      const attachment = {
-        kind: 'voice', url: result.url, name: file.name,
-        size: result.size, duration: Math.round(seconds)
+      if (!await chatKey(chatId)) throw new Error('Für diesen Chat fehlt noch der Schlüssel.');
+      const raw = new Uint8Array(await blob.arrayBuffer());
+      const boxed = await sealBytes(chatId, raw);
+      const name = `sprachnachricht-${Date.now()}.webm`;
+      const result = await api.upload(new Blob([boxed.bytes], { type: 'application/octet-stream' }), name);
+      const body = {
+        t: '',
+        r: replyBlock(),
+        a: {
+          kind: 'voice', url: result.url, name, size: raw.length,
+          iv: boxed.iv, mime: blob.type || 'audio/webm', duration: Math.round(seconds)
+        }
       };
-      const payload = { chatId, text: '', attachment, replyTo: state.replyTo?.id || null };
-      sendMessage({ ...payload, tempId: optimistic(chatId, payload) });
+      const clean = Object.fromEntries(Object.entries(body).filter(([, v]) => v != null));
       cancelReply();
+      sendMessage({ chatId, enc: await seal(chatId, clean), tempId: optimistic(chatId, clean) });
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -292,7 +327,7 @@ export function initComposer() {
     } else if (event.key === 'ArrowUp' && !box.value.trim()) {
       // Wie bei Telegram: Pfeil nach oben bearbeitet die letzte eigene Nachricht.
       const own = [...(state.messages.get(currentChatId) || [])].reverse()
-        .find((m) => m.senderId === state.me?.id && !m.deleted && !m.attachment);
+        .find((m) => m.senderId === state.me?.id && !m.deleted && m.body?.t && !m.body?.a && !m.body?.c);
       if (own) { event.preventDefault(); startEdit(own); }
     }
   });

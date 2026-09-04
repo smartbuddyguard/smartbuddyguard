@@ -1,10 +1,11 @@
 // Service Worker: App-Hülle offline verfügbar halten, API immer live abfragen.
-const CACHE = 'telegroove-v1';
+const CACHE = 'buddychat-v2';
 const SHELL = [
   '/', '/index.html', '/css/app.css',
   '/js/app.js', '/js/api.js', '/js/state.js', '/js/socket.js', '/js/util.js',
   '/js/ui.js', '/js/chat.js', '/js/chatlist.js', '/js/composer.js',
   '/js/dialogs.js', '/js/emoji.js', '/js/info.js',
+  '/js/crypto.js', '/js/decrypt.js', '/js/calls.js', '/icons/logo.webp',
   '/manifest.webmanifest', '/icons/icon-192.png'
 ];
 

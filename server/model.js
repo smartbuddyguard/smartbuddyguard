@@ -15,6 +15,7 @@ export function publicUser(user, online = false) {
     color: user.color,
     avatar: user.avatar || null,
     lastSeen: user.lastSeen || 0,
+    pub: user.pub || null,
     online
   };
 }
@@ -29,7 +30,7 @@ export function createUser({ phone, name, hash, salt }) {
     id: id('u_'),
     phone,
     name,
-    about: 'Hey! Ich benutze TeleGroove.',
+    about: 'Hey! Ich benutze BuddyChat.',
     color: colorForId(phone),
     avatar: null,
     hash,
@@ -79,19 +80,23 @@ export function createGroupChat(ownerId, memberIds, title) {
   return chat;
 }
 
+/**
+ * Nachrichten werden im Browser verschlüsselt; der Server sieht nur `enc`
+ * ({iv, ct}) plus die Metadaten, die er zum Zustellen und Sortieren braucht.
+ * Systemmeldungen erzeugt der Server selbst und bleiben deshalb im Klartext.
+ */
 export function addMessage(chat, senderId, data) {
   const msg = {
     id: id('m_'),
     chatId: chat.id,
     senderId,
-    text: String(data.text || '').slice(0, 8000),
     ts: now(),
     editedAt: 0,
     deleted: false,
     system: !!data.system,
-    replyTo: data.replyTo || null,
-    forwardedFrom: data.forwardedFrom || null,
-    attachment: data.attachment || null,
+    enc: data.enc && data.enc.ct ? { iv: String(data.enc.iv || ''), ct: String(data.enc.ct || '') } : null,
+    text: data.system ? String(data.text || '').slice(0, 400) : '',
+    call: data.call || null,
     reactions: {},
     readBy: [senderId],
     deliveredTo: [senderId]
@@ -106,29 +111,7 @@ export function systemMessage(chat, text) {
   return addMessage(chat, 'system', { text, system: true });
 }
 
-/** Kurzvorschau der zitierten Nachricht, damit der Client nicht nachladen muss. */
-function replyPreview(message) {
-  if (!message?.replyTo) return null;
-  const src = db.messages.find((m) => m.id === message.replyTo);
-  if (!src) return null;
-  const author = src.senderId === 'system' ? 'System' : (findUser(src.senderId)?.name || 'Unbekannt');
-  return { id: src.id, author, text: previewText(src), deleted: src.deleted };
-}
-
-export function previewText(message) {
-  if (!message) return '';
-  if (message.deleted) return 'Diese Nachricht wurde gelöscht';
-  if (message.attachment) {
-    const labels = { image: '📷 Foto', video: '🎬 Video', voice: '🎤 Sprachnachricht', audio: '🎵 Audio', file: '📎 Datei' };
-    const label = labels[message.attachment.kind] || '📎 Anhang';
-    return message.text ? `${label} ${message.text}` : label;
-  }
-  return message.text;
-}
-
-export function publicMessage(message) {
-  return { ...message, replyPreview: replyPreview(message) };
-}
+export const publicMessage = (message) => ({ ...message });
 
 /** Ein Chat, aufbereitet aus Sicht von `userId`. */
 export function publicChat(chat, userId, onlineIds = new Set()) {
@@ -160,7 +143,9 @@ export function publicChat(chat, userId, onlineIds = new Set()) {
     createdAt: chat.createdAt,
     lastMessageAt: chat.lastMessageAt,
     peer,
-    lastMessage: last ? { ...publicMessage(last), preview: previewText(last) } : null,
+    lastMessage: last ? publicMessage(last) : null,
+    myKey: (chat.keys || {})[userId] || null,
+    keyOwners: Object.keys(chat.keys || {}),
     unread,
     pinned: state.pinned,
     muted: state.muted,

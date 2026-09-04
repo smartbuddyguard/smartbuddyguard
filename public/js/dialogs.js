@@ -4,9 +4,9 @@ import { state, putChat, putUsers, emit } from './state.js';
 import { api, clearToken } from './api.js';
 import { openModal, closeModal, confirmDialog, fieldInput } from './ui.js';
 import { openChat } from './chat.js';
-import { disconnect } from './socket.js';
+import { disconnect, provisionChatKey } from './socket.js';
 
-const THEME_KEY = 'telegroove.theme';
+const THEME_KEY = 'buddychat.theme';
 
 /* -------------------------------- Theme -------------------------------- */
 export function applyTheme(theme) {
@@ -139,8 +139,9 @@ export async function newGroupDialog() {
               title: titleInput.value.trim() || 'Neue Gruppe',
               memberIds: [...chosen]
             });
-            putChat(data.chat);
             putUsers(data.members);
+            putChat(data.chat);
+            await provisionChatKey(data.chat, data.members);
             openChat(data.chat.id);
           } catch (err) { toast(err.message, 'error'); return false; }
         }
@@ -168,7 +169,9 @@ export async function contactsDialog() {
           onclick: async () => {
             try {
               const data = await api.createChat({ userId: user.id });
+              putUsers(data.members);
               putChat(data.chat);
+              await provisionChatKey(data.chat, data.members);
               closeModal();
               openChat(data.chat.id);
             } catch (err) { toast(err.message, 'error'); }
@@ -202,7 +205,7 @@ export function addContactDialog() {
   openModal({
     title: 'Kontakt hinzufügen',
     body: el('div', {}, [
-      el('p', { text: 'Die Nummer muss bereits ein TeleGroove-Konto haben.' }),
+      el('p', { text: 'Die Nummer muss bereits ein BuddyChat-Konto haben.' }),
       phoneField, nameField
     ]),
     actions: [

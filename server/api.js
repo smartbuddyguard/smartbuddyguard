@@ -4,7 +4,7 @@ import path from 'node:path';
 import { db, save, id, findUser, findUserByPhone, findChat, chatState, UPLOAD_DIR } from './store.js';
 import { hashPassword, verifyPassword, createSession, dropSession, userForToken, normalizePhone } from './auth.js';
 import {
-  publicUser, publicChat, publicMessage, chatsForUser, previewText, createUser,
+  publicUser, publicChat, publicMessage, chatsForUser, createUser,
   createPrivateChat, createGroupChat, membersOf, systemMessage, contactName, now
 } from './model.js';
 import { onlineIds, isOnline, pushChat, knownUsers, broadcastChat } from './hub.js';
@@ -107,6 +107,7 @@ export async function handleApi(req, res, url) {
     if (typeof body.name === 'string' && body.name.trim().length >= 2) user.name = body.name.trim().slice(0, 60);
     if (typeof body.about === 'string') user.about = body.about.slice(0, 140);
     if (typeof body.avatar === 'string' || body.avatar === null) user.avatar = body.avatar || null;
+    if (body.pub && typeof body.pub === 'object') user.pub = body.pub;
     save();
     const me = publicUser(user, true);
     for (const chat of db.chats) {
@@ -263,26 +264,8 @@ export async function handleApi(req, res, url) {
     });
   }
 
-  // --- Globale Suche ----------------------------------------------------
-  if (route[0] === 'search' && method === 'GET') {
-    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
-    if (q.length < 2) return json(res, 200, { messages: [] });
-    const myChatIds = new Set(db.chats.filter((c) => c.memberIds.includes(user.id)).map((c) => c.id));
-    const messages = db.messages
-      .filter((m) => myChatIds.has(m.chatId) && !m.deleted && m.text.toLowerCase().includes(q))
-      .slice(-60)
-      .reverse()
-      .map((m) => {
-        const chat = findChat(m.chatId);
-        return {
-          ...publicMessage(m),
-          preview: previewText(m),
-          chatTitle: publicChat(chat, user.id).title,
-          senderName: m.senderId === 'system' ? 'System' : findUser(m.senderId)?.name || ''
-        };
-      });
-    return json(res, 200, { messages });
-  }
+  // Eine serverseitige Volltextsuche gibt es bewusst nicht: der Server kennt
+  // die Inhalte nicht. Der Client durchsucht die entschlüsselten Nachrichten.
 
   // --- Upload -----------------------------------------------------------
   if (route[0] === 'upload' && method === 'POST') {

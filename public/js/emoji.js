@@ -3,7 +3,7 @@ import { el } from './util.js';
 
 export const QUICK_REACTIONS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🙏', '🎉'];
 
-const RECENT_KEY = 'telegroove.recentEmoji';
+const RECENT_KEY = 'buddychat.recentEmoji';
 
 export const CATEGORIES = [
   {

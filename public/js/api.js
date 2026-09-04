@@ -1,5 +1,5 @@
 // REST-Client. Der Session-Token liegt im localStorage.
-const TOKEN_KEY = 'telegroove.token';
+const TOKEN_KEY = 'buddychat.token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (token) => localStorage.setItem(TOKEN_KEY, token);

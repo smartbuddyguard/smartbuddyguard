@@ -138,12 +138,8 @@ function handleCommand(userId, conn, msg) {
     case 'message:send': {
       const chat = ensureChatAccess(msg.chatId, userId);
       if (!chat) return;
-      const message = addMessage(chat, userId, {
-        text: msg.text,
-        replyTo: msg.replyTo,
-        attachment: msg.attachment,
-        forwardedFrom: msg.forwardedFrom
-      });
+      if (!msg.enc || !msg.enc.ct) return;
+      const message = addMessage(chat, userId, { enc: msg.enc, call: msg.call });
       // Empfänger, die online sind, bekommen die Nachricht sofort zugestellt.
       for (const memberId of chat.memberIds) {
         if (memberId !== userId && isOnline(memberId) && !message.deliveredTo.includes(memberId)) {
@@ -167,7 +163,8 @@ function handleCommand(userId, conn, msg) {
     case 'message:edit': {
       const message = db.messages.find((m) => m.id === msg.id);
       if (!message || message.senderId !== userId || message.deleted) return;
-      message.text = String(msg.text || '').slice(0, 8000);
+      if (!msg.enc || !msg.enc.ct) return;
+      message.enc = { iv: String(msg.enc.iv || ''), ct: String(msg.enc.ct || '') };
       message.editedAt = now();
       save();
       const chat = findChat(message.chatId);
@@ -182,8 +179,8 @@ function handleCommand(userId, conn, msg) {
       if (!chat || !chat.memberIds.includes(userId)) return;
       if (message.senderId !== userId && chat.ownerId !== userId) return;
       message.deleted = true;
-      message.text = '';
-      message.attachment = null;
+      message.enc = null;
+      message.call = null;
       message.reactions = {};
       save();
       broadcastChat(chat, { t: 'message:update', chatId: chat.id, message: publicMessage(message) });
@@ -247,6 +244,48 @@ function handleCommand(userId, conn, msg) {
         if (senderId === userId || senderId === 'system') continue;
         sendTo(senderId, { t: 'read', chatId: chat.id, userId, ts });
       }
+      return;
+    }
+
+    // --- Schlüsseltausch -------------------------------------------------
+    // Der Server transportiert nur die verpackten Schlüssel; lesen kann er sie
+    // nicht, weil sie für den Empfänger per ECDH verschlüsselt sind.
+    case 'key:request': {
+      const chat = ensureChatAccess(msg.chatId, userId);
+      if (!chat) return;
+      const user = findUser(userId);
+      broadcastChat(chat, {
+        t: 'key:request', chatId: chat.id, userId, pub: user?.pub || null
+      }, userId);
+      return;
+    }
+
+    case 'key:deliver': {
+      const chat = ensureChatAccess(msg.chatId, userId);
+      if (!chat || !msg.toUserId || !msg.box) return;
+      if (!chat.memberIds.includes(msg.toUserId)) return;
+      if (!chat.keys) chat.keys = {};
+      chat.keys[msg.toUserId] = { from: userId, ...msg.box };
+      save();
+      sendTo(msg.toUserId, { t: 'key:new', chatId: chat.id, box: chat.keys[msg.toUserId] });
+      return;
+    }
+
+    // --- Anrufe ----------------------------------------------------------
+    // Reine Weiterleitung von Angebot, Antwort und ICE-Kandidaten; die
+    // Medien laufen anschließend direkt zwischen den Geräten.
+    case 'call': {
+      const target = findUser(msg.to);
+      if (!target) return;
+      const shared = db.chats.some((c) =>
+        c.memberIds.includes(userId) && c.memberIds.includes(msg.to));
+      if (!shared) return;
+      const user = findUser(userId);
+      sendTo(msg.to, {
+        t: 'call', sub: msg.sub, from: userId, fromName: user?.name || '',
+        callId: msg.callId, chatId: msg.chatId, kind: msg.kind,
+        sdp: msg.sdp, candidate: msg.candidate, reason: msg.reason
+      });
       return;
     }
 

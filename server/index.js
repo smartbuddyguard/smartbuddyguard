@@ -110,7 +110,7 @@ attachWebSocket(server, (conn, req) => handleConnection(conn, req));
 startHeartbeat();
 
 server.listen(PORT, HOST, () => {
-  console.log(`TeleGroove läuft auf http://localhost:${PORT}`);
+  console.log(`BuddyChat läuft auf http://localhost:${PORT}`);
   console.log('Zum Testen: zweites Browserfenster (privater Modus) öffnen und zweites Konto anlegen.');
 });
 

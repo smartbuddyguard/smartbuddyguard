@@ -4,6 +4,8 @@ import { state, visibleChats, getUser, on, typingNames, putChat, putUsers, remov
 import { api } from './api.js';
 import { openMenu, confirmDialog } from './ui.js';
 import { openChat, closeChat } from './chat.js';
+import { previewOf } from './decrypt.js';
+import { provisionChatKey } from './socket.js';
 
 const list = () => $('#chatList');
 const results = () => $('#searchResults');
@@ -30,7 +32,7 @@ function previewLine(chat) {
   if (chat.draft) return `<span class="draft">Entwurf:</span> <span class="text">${escapeHtml(chat.draft)}</span>`;
   const message = chat.lastMessage;
   if (!message) return '<span class="text" style="opacity:.7">Noch keine Nachrichten</span>';
-  const text = message.preview ?? message.text ?? '';
+  const text = previewOf(message);
   if (message.system) return `<span class="text" style="opacity:.8">${escapeHtml(text)}</span>`;
   let prefix = '';
   if (chat.type === 'group' && message.senderId !== state.me?.id) {
@@ -195,8 +197,9 @@ const runSearch = debounce(async (query) => {
           onClick: async () => {
             try {
               const { chat, members } = await api.createChat({ userId: user.id });
-              putChat(chat);
               putUsers(members);
+              putChat(chat);
+              await provisionChatKey(chat, members);
               clearSearch();
               openChat(chat.id);
             } catch (err) { toast(err.message, 'error'); }
@@ -207,20 +210,32 @@ const runSearch = debounce(async (query) => {
   } catch { /* Suche ist nicht kritisch */ }
 
   if (query.length >= 2) {
-    try {
-      const { messages } = await api.searchMessages(query);
-      if (messages.length) {
-        nodes.push(el('div', { class: 'list-section', text: 'Nachrichten' }));
-        for (const message of messages.slice(0, 20)) {
-          nodes.push(resultItem({
-            avatar: avatarEl({ name: message.chatTitle, color: getUser(message.senderId)?.color }, 'avatar-sm'),
-            title: escapeHtml(message.chatTitle),
-            sub: `${escapeHtml(message.senderName)}: ${highlight(message.preview, query)}`,
-            onClick: () => { clearSearch(); openChat(message.chatId, { focusMessageId: message.id }); }
-          }));
-        }
+    // Der Server kennt die Inhalte nicht — gesucht wird in den bereits
+    // entschlüsselten Nachrichten dieses Geräts.
+    const hits = [];
+    for (const [chatId, messages] of state.messages) {
+      const chat = state.chats.get(chatId);
+      if (!chat) continue;
+      for (const message of messages) {
+        const text = message.body?.t;
+        if (!text || message.deleted) continue;
+        if (!text.toLowerCase().includes(query.toLowerCase())) continue;
+        hits.push({ chat, message, text });
       }
-    } catch { /* ebenfalls unkritisch */ }
+    }
+    if (hits.length) {
+      nodes.push(el('div', { class: 'list-section', text: 'Nachrichten' }));
+      for (const hit of hits.slice(-20).reverse()) {
+        const who = hit.message.senderId === state.me?.id
+          ? 'Du' : (getUser(hit.message.senderId)?.name || 'Unbekannt');
+        nodes.push(resultItem({
+          avatar: avatarEl({ ...hit.chat, online: hit.chat.peer?.online }, 'avatar-sm'),
+          title: escapeHtml(hit.chat.title),
+          sub: `${escapeHtml(who)}: ${highlight(hit.text, query)}`,
+          onClick: () => { clearSearch(); openChat(hit.chat.id, { focusMessageId: hit.message.id }); }
+        }));
+      }
+    }
   }
 
   if (nodes.length === 0) nodes.push(el('div', { class: 'list-empty', text: `Nichts gefunden für „${query}“.` }));
