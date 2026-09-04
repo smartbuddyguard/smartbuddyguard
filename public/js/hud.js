@@ -5,6 +5,11 @@ import { MAP_SIZE, WEAPONS, MAX_WANTED } from '/shared/constants.js';
 import { clamp } from '/shared/util.js';
 
 export const WEAPON_LABELS = ['Fäuste', 'Pistole', 'Uzi', 'Schrotflinte', 'Raketenwerfer'];
+export const MISSION_TITLES = {
+  1: 'Wagen zum Treffpunkt bringen',
+  2: ['Ersten Halt anfahren', 'Zur Übergabe fahren'],
+  3: 'Zielperson ausschalten'
+};
 export const PICKUP_LABELS = {
   1: 'Pistole', 2: 'Uzi', 3: 'Schrotflinte', 4: 'Raketenwerfer',
   5: 'Medikit', 6: 'Panzerung', 7: 'Geld'
@@ -38,6 +43,7 @@ export class Hud {
     this.drawNameLabels(ctx);
     if (you) {
       this.drawStatus(ctx, you, s, state);
+      if (you.ms) { this.drawMissionBar(ctx, you.ms, w, s); this.drawObjectiveArrow(ctx, you.ms, w, h); }
       this.drawMinimap(ctx, state, w, s);
       this.drawKillFeed(ctx, w, time, s);
       if (!you.al) this.drawDeath(ctx, w, h, you);
@@ -143,7 +149,12 @@ export class Hud {
     for (const pu of state.entities.values()) {
       if (pu.type === 4) dot(pu.x, pu.y, '#7ce08a', 1.4);
     }
-    if (state.you) dot(state.local.x, state.local.y, '#ffd23f', 3);
+    for (const ph of this.r.city.phones) dot(ph.x, ph.y, 'rgba(90,190,255,.75)', 1.2);
+    if (state.you && state.you.ms) {
+      const m = state.you.ms;
+      dot(m.x, m.y, m.k === 3 ? '#ff5f4d' : '#ffd23f', 3.4);
+    }
+    if (state.you) dot(state.local.x, state.local.y, '#ffffff', 3);
 
     ctx.strokeStyle = 'rgba(255,255,255,.25)';
     ctx.lineWidth = 1;
@@ -191,6 +202,75 @@ export class Hud {
     ctx.fillText(label, 14 + s.left, h - 10 - s.bottom);
   }
 
+
+
+  // -------------------------------------------------------------- missions
+
+  drawMissionBar(ctx, m, w, s) {
+    const title = m.k === 2 ? MISSION_TITLES[2][m.s] : MISSION_TITLES[m.k];
+    const pw = Math.min(320, w - 40);
+    const x = Math.round((w - pw) / 2);
+    const y = 96 + s.top;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(12,15,21,.82)';
+    this.panelPath(ctx, x, y, pw, 44, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,210,63,.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = '600 10px ui-monospace, monospace';
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillText('AUFTRAG', x + 12, y + 15);
+    ctx.font = '700 13px ui-sans-serif, sans-serif';
+    ctx.fillStyle = '#e8ecf4';
+    ctx.fillText(title, x + 12, y + 31);
+
+    ctx.textAlign = 'right';
+    ctx.font = '700 14px ui-monospace, monospace';
+    ctx.fillStyle = m.t < 15 ? '#ff5f4d' : '#e8ecf4';
+    ctx.fillText(`${Math.ceil(m.t)}s`, x + pw - 12, y + 26);
+
+    ctx.fillStyle = 'rgba(255,255,255,.10)';          // time bar
+    ctx.fillRect(x + 12, y + 37, pw - 24, 3);
+    ctx.fillStyle = m.t < 15 ? '#ff5f4d' : '#ffd23f';
+    ctx.fillRect(x + 12, y + 37, (pw - 24) * clamp(m.t / 120, 0, 1), 3);
+    ctx.restore();
+  }
+
+  // Points at the objective whenever it is off screen.
+  drawObjectiveArrow(ctx, m, w, h) {
+    const p = this.r.worldToScreen(m.x, m.y);
+    const pad = 54;
+    if (p.x > pad && p.x < w - pad && p.y > pad && p.y < h - pad) return;
+    const cx = w / 2, cy = h / 2;
+    const a = Math.atan2(p.y - cy, p.x - cx);
+    const rx = (w / 2 - pad) / Math.abs(Math.cos(a) || 1e-6);
+    const ry = (h / 2 - pad) / Math.abs(Math.sin(a) || 1e-6);
+    const d = Math.min(rx, ry);
+    const ax = cx + Math.cos(a) * d;
+    const ay = cy + Math.sin(a) * d;
+    const dist = Math.round(Math.hypot(m.x - this.r.cam.x, m.y - this.r.cam.y) / 10);
+
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(a);
+    ctx.fillStyle = m.k === 3 ? 'rgba(255,95,77,.92)' : 'rgba(255,210,63,.92)';
+    ctx.beginPath();
+    ctx.moveTo(16, 0); ctx.lineTo(-8, -11); ctx.lineTo(-3, 0); ctx.lineTo(-8, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '700 11px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(232,236,244,.85)';
+    ctx.fillText(`${dist} m`, ax - Math.cos(a) * 22, ay - Math.sin(a) * 22 + 4);
+    ctx.restore();
+  }
 
   // ------------------------------------------------------------- inventory
 

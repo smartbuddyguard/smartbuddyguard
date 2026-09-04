@@ -306,6 +306,90 @@ export class Renderer {
     ctx.restore();
   }
 
+
+  // ------------------------------------------------------- city landmarks
+
+  drawPhones(time) {
+    const ctx = this.ctx;
+    const b = this.viewBounds(40);
+    for (const ph of this.city.phones) {
+      if (ph.x < b.x0 || ph.x > b.x1 || ph.y < b.y0 || ph.y > b.y1) continue;
+      const pulse = 0.5 + Math.sin(time * 2.5 + ph.id) * 0.5;
+      ctx.save();
+      ctx.translate(ph.x, ph.y);
+      ctx.fillStyle = `rgba(90,190,255,${0.10 + pulse * 0.12})`;
+      ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,.3)';
+      this.roundRect(-6, -6, 15, 15, 3); ctx.fill();
+      ctx.fillStyle = '#2f6fa8';                      // booth
+      this.roundRect(-7, -8, 14, 15, 3); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.45)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#d8e6f2';                      // handset
+      this.roundRect(-3.5, -4.5, 7, 3, 1.4); ctx.fill();
+      this.roundRect(-3.5, -1, 7, 5, 1.4); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  drawSprayShops(time) {
+    const ctx = this.ctx;
+    const b = this.viewBounds(60);
+    for (const shop of this.city.sprayShops) {
+      if (shop.x > b.x1 || shop.x + shop.w < b.x0 || shop.y > b.y1 || shop.y + shop.h < b.y0) continue;
+      ctx.save();
+      ctx.translate(shop.x, shop.y);
+
+      ctx.fillStyle = '#2b3240';                      // bay floor
+      ctx.fillRect(0, 0, shop.w, shop.h);
+      ctx.save();                                     // hazard stripes
+      ctx.beginPath(); ctx.rect(0, 0, shop.w, shop.h); ctx.clip();
+      ctx.fillStyle = 'rgba(255,210,63,.22)';
+      for (let x = -shop.h; x < shop.w; x += 22) {
+        ctx.beginPath();
+        ctx.moveTo(x, shop.h); ctx.lineTo(x + 11, shop.h);
+        ctx.lineTo(x + 11 + shop.h, 0); ctx.lineTo(x + shop.h, 0);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.strokeStyle = 'rgba(255,210,63,.5)';        // bay outline
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, shop.w - 2, shop.h - 2);
+
+      ctx.fillStyle = '#1b2029';                      // canopy on the pavement side
+      ctx.fillRect(0, shop.h - 7, shop.w, 7);
+      ctx.fillStyle = '#ffd23f';
+      ctx.font = 'bold 9px ui-sans-serif, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SPRAY', shop.w / 2, shop.h - 1.5);
+      ctx.restore();
+    }
+  }
+
+  drawMissionMarker(m, time) {
+    const ctx = this.ctx;
+    const pulse = 0.5 + Math.sin(time * 3) * 0.5;
+    const color = m.k === 3 ? '255,95,77' : '255,210,63';
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.fillStyle = `rgba(${color},${0.10 + pulse * 0.10})`;
+    ctx.beginPath(); ctx.arc(0, 0, m.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgba(${color},${0.55 + pulse * 0.35})`;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -time * 22;
+    ctx.beginPath(); ctx.arc(0, 0, m.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    const lift = 6 + pulse * 4;                       // bobbing chevron
+    ctx.fillStyle = `rgba(${color},.9)`;
+    ctx.beginPath();
+    ctx.moveTo(0, -lift); ctx.lineTo(-7, -lift - 11); ctx.lineTo(7, -lift - 11);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
   // ---------------------------------------------------------- characters
 
   // Every character is built from the same parts: legs that swing with the
@@ -565,6 +649,13 @@ export class Renderer {
   drawPed(p) {
     const look = pedLook(p.id);
     const g = this.gaitPhase('n' + p.id, p.x, p.y);
+    if (p.target) {
+      const ctx = this.ctx;
+      const pulse = 0.5 + Math.sin(performance.now() / 220) * 0.5;
+      ctx.strokeStyle = `rgba(255,95,77,${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 15 + pulse * 3, 0, Math.PI * 2); ctx.stroke();
+    }
     this.drawCharacter({
       x: p.x, y: p.y, body: p.angle, aim: p.angle,
       phase: g.phase, moving: g.moving, scale: 0.95,

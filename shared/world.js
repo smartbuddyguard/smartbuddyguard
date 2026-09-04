@@ -8,7 +8,7 @@ import {
   CRIME_KILL_PED, CRIME_KILL_COP, CRIME_SHOOT, CRIME_RUNOVER, LANE_OFFSET, MAX_PARKED,
   P_PISTOL, P_UZI, P_SHOTGUN, P_ROCKET, P_HEALTH, P_ARMOUR, P_CASH, PICKUP_RESPAWN
 } from './constants.js';
-import { generateCity } from './city.js';
+import { generateCity, inRect } from './city.js';
 import { stepPlayer, stepCar, carRadius, raycastTiles, resolveCircleTiles, clampToMap } from './physics.js';
 import { clamp, dist, dist2, angleDiff, makeRng } from './util.js';
 
@@ -23,6 +23,7 @@ export class World {
     this.pickups = new Map();
     this.events = [];
     this.nextId = 1;
+    this.phoneCd = new Map();   // phone id -> time it can hand out the next job
     this.time = 0;
     this.tick = 0;
     this.rosterDirty = true;
@@ -145,7 +146,8 @@ export class World {
       owned: { 1: false, 2: false, 3: false, 4: false },
       wanted: 0, wantedTimer: 0, kills: 0, deaths: 0, cash: 0, score: 0,
       carId: null, fireCd: 0, input: emptyInput(), lastSeq: 0, enterLatch: false,
-      switchLatch: false, hitFlash: 0, joinedAt: this.time
+      switchLatch: false, hitFlash: 0, joinedAt: this.time,
+      mission: null, sprayCd: 0
     };
     this.players.set(id, p);
     this.rosterDirty = true;
@@ -190,6 +192,8 @@ export class World {
     this.updateCarCollisions(dt);
     this.updatePolice(dt);
     this.updatePickups(dt);
+    this.updateMissions(dt);
+    this.updateSprayShops(dt);
     if (this.tick % 60 === 0) this.maintainWorld();
   }
 
@@ -259,6 +263,7 @@ export class World {
       } else {
         stepPlayer(this.city, p, { mx: p.input.mx, my: p.input.my }, dt);
         if (p.input.fire) this.fireWeapon(p, p.input.aim || p.angle, null);
+        if (!p.mission) this.tryPhone(p);
       }
     }
   }
@@ -451,6 +456,7 @@ export class World {
     p.wantedTimer = 0;
     const car = p.carId ? this.cars.get(p.carId) : null;
     if (car) { car.driver = null; p.carId = null; }
+    if (p.mission) this.failMission(p, 'dead');
     this.events.push({ t: 'blood', x: p.x, y: p.y, kind: 'player', big: 1 });
 
     // Whatever they were carrying stays on the pavement for the next person.
@@ -488,6 +494,10 @@ export class World {
         this.addWanted(killer, CRIME_KILL_PED);
       }
       if (this.rng() < 0.35) this.dropLoot(ped.x, ped.y, P_CASH, 40 + this.randInt(90), 30);
+      if (ped.targetOf) {
+        const client = this.players.get(ped.targetOf);
+        if (client && client.mission && client.mission.pedId === ped.id) this.completeMission(client);
+      }
     }
   }
 
@@ -753,6 +763,148 @@ export class World {
     const car = this.makeCar(best.x, best.y, this.rand(-Math.PI, Math.PI), CAR_POLICE);
     car.siren = true;
     return car;
+  }
+
+
+  // ---------------------------------------------------------------- missions
+
+  // Walking into a phone booth without a job hands you one, GTA-1 style.
+  tryPhone(p) {
+    for (const ph of this.city.phones) {
+      if ((this.phoneCd.get(ph.id) || 0) > this.time) continue;
+      if (dist2(p.x, p.y, ph.x, ph.y) > 30 * 30) continue;
+      this.startMission(p, ph);
+      return;
+    }
+  }
+
+  farSpot(from, minDist) {
+    for (let tries = 0; tries < 24; tries++) {
+      const n = this.city.nodes[this.randomNode()];
+      if (dist2(n.x, n.y, from.x, from.y) > minDist * minDist) return { x: n.x, y: n.y };
+    }
+    const n = this.city.nodes[this.randomNode()];
+    return { x: n.x, y: n.y };
+  }
+
+  startMission(p, phone) {
+    const kind = 1 + this.randInt(3);
+    const m = { kind, stage: 0, phone: phone.id, radius: 66, pedId: 0 };
+
+    if (kind === 3) {
+      // Find someone far enough away to make it a trip, not a walk.
+      let best = null, bestD = 0;
+      for (const ped of this.peds.values()) {
+        if (ped.targetOf) continue;
+        const d = dist2(ped.x, ped.y, p.x, p.y);
+        if (d > bestD && d > 500 * 500) { bestD = d; best = ped; }
+      }
+      if (!best) { m.kind = 2; } else {
+        best.targetOf = p.id;
+        m.pedId = best.id;
+        m.x = best.x; m.y = best.y;
+        m.radius = 40;
+        m.reward = 1200;
+        m.endsAt = this.time + 120;
+      }
+    }
+
+    if (m.kind === 1) {                       // bring a car to the drop-off
+      const spot = this.farSpot(p, 600);
+      m.x = spot.x; m.y = spot.y;
+      m.reward = 900;
+      m.endsAt = this.time + 100;
+    } else if (m.kind === 2) {                // two stop courier run
+      const a = this.farSpot(p, 450);
+      m.x = a.x; m.y = a.y;
+      m.second = this.farSpot(a, 500);
+      m.reward = 800;
+      m.endsAt = this.time + 115;
+    }
+
+    p.mission = m;
+    this.phoneCd.set(phone.id, this.time + 25);
+    this.events.push({ t: 'mission', id: p.id, state: 'start', k: m.kind, x: m.x, y: m.y, rw: m.reward });
+    this.rosterDirty = true;
+  }
+
+  updateMissions(dt) {
+    for (const p of this.players.values()) {
+      const m = p.mission;
+      if (!m) continue;
+
+      if (!p.alive) { this.failMission(p, 'dead'); continue; }
+      if (this.time > m.endsAt) { this.failMission(p, 'time'); continue; }
+
+      if (m.kind === 3) {
+        const ped = this.peds.get(m.pedId);
+        if (!ped) { this.completeMission(p); continue; }
+        m.x = ped.x; m.y = ped.y;                     // the marker follows them
+        continue;
+      }
+
+      const reached = dist2(p.x, p.y, m.x, m.y) < m.radius * m.radius;
+      if (!reached) continue;
+
+      if (m.kind === 1) {
+        if (!p.carId) continue;                       // the client wants the car, not you
+        this.completeMission(p);
+      } else if (m.kind === 2) {
+        if (m.stage === 0) {
+          m.stage = 1;
+          m.x = m.second.x; m.y = m.second.y;
+          this.events.push({ t: 'mission', id: p.id, state: 'stage', k: m.kind, x: m.x, y: m.y });
+        } else {
+          this.completeMission(p);
+        }
+      }
+    }
+  }
+
+  completeMission(p) {
+    const m = p.mission;
+    if (!m) return;
+    const bonus = Math.round(Math.max(0, m.endsAt - this.time) * 4);
+    const total = m.reward + bonus;
+    p.cash += total;
+    p.score += Math.round(total / 10);
+    if (m.pedId) { const ped = this.peds.get(m.pedId); if (ped) ped.targetOf = 0; }
+    p.mission = null;
+    this.events.push({ t: 'mission', id: p.id, state: 'done', k: m.kind, rw: total, bonus });
+    this.rosterDirty = true;
+  }
+
+  failMission(p, reason) {
+    const m = p.mission;
+    if (!m) return;
+    if (m.pedId) { const ped = this.peds.get(m.pedId); if (ped) ped.targetOf = 0; }
+    p.mission = null;
+    this.events.push({ t: 'mission', id: p.id, state: 'fail', k: m.kind, reason });
+    this.rosterDirty = true;
+  }
+
+  // ------------------------------------------------------------ pay 'n' spray
+
+  updateSprayShops(dt) {
+    for (const p of this.players.values()) {
+      if (!p.alive || !p.carId || p.sprayCd > this.time) continue;
+      const car = this.cars.get(p.carId);
+      if (!car || car.speed > 110) continue;
+      for (const shop of this.city.sprayShops) {
+        if (!inRect(shop, car.x, car.y)) continue;
+        const cost = Math.min(p.cash, 250);
+        p.cash -= cost;
+        car.hp = car.maxHp;
+        car.colorSeed = this.randInt(1000);
+        const stars = Math.floor(p.wanted);
+        p.wanted = 0;
+        p.wantedTimer = 0;
+        p.sprayCd = this.time + 20;
+        this.rosterDirty = true;
+        this.events.push({ t: 'spray', x: car.x, y: car.y, id: p.id, cost, stars });
+        break;
+      }
+    }
   }
 
   // ----------------------------------------------------------------- pickups

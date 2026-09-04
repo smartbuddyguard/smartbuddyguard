@@ -69,6 +69,8 @@ Im Auto sind links/rechts die Lenkung, vor Gas, zurück Bremse und dann Rückwä
 | Tasche / Inventar | Button **TASCHE** | `I` |
 | Waffe direkt wählen | Zeile in der Tasche antippen | `1`–`5` |
 | Punktetabelle bzw. Pause | Button **≡** oben rechts | `Tab` |
+| Auftrag annehmen | in eine Telefonzelle laufen | in eine Telefonzelle laufen |
+| Lackieren / Fahndung löschen | mit dem Auto in die Spray-Box fahren | dito |
 
 Zielen zu Fuß: Im Modern-Schema zielt die Figur in Laufrichtung und rastet leicht auf nahe
 Gegner ein; am Desktop übernimmt die Maus, sobald du sie bewegst. Im Original-Schema zielt
@@ -117,6 +119,17 @@ sie immer dorthin, wohin du dich gedreht hast.
 * **Fahndungslevel:** Schüsse, überfahrene Passanten und erledigte Cops erhöhen die
   Sterne (0–5). Ab einem Stern rücken Streifenwagen an, rammen, verfolgen und schießen.
   Ohne neue Verbrechen kühlt der Level wieder ab.
+* **Aufträge:** Über die Stadt verteilt stehen 18 **Telefonzellen**. Zu Fuß hineinlaufen
+  nimmt einen Job an – drei Sorten, jeweils mit Zeitlimit, Zielmarkierung im Bild, Pfeil am
+  Bildrand samt Entfernung und Punkt auf der Minimap:
+  *Wagen abliefern* (irgendein Auto zum Treffpunkt bringen, $900),
+  *Kurierfahrt* (zwei Stationen nacheinander, $800) und
+  *Zielperson* (eine markierte Person ausschalten, $1200).
+  Wer schnell ist, bekommt Zeitbonus obendrauf; wer stirbt oder die Zeit reißt, verliert den
+  Auftrag. Jede Zelle hat danach 25 Sekunden Pause.
+* **Pay 'n' Spray:** Vier Lackierboxen am Straßenrand. Mit dem Auto langsam hineinfahren –
+  für $250 wird der Wagen repariert, neu lackiert und der **Fahndungslevel gelöscht**.
+  Der einzige Weg, fünf Sterne wieder loszuwerden, ohne zu sterben.
 * **Multiplayer:** Alle Spieler teilen sich dieselbe Stadt, sehen gegenseitig Autos,
   Schüsse und Explosionen. Kills, Tode, Geld und Ping stehen in der Punktetabelle.
 

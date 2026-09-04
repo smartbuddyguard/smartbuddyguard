@@ -120,9 +120,53 @@ export function generateCity(seed) {
     }
   }
 
-  const city = { seed, tiles, solid, buildings, props, nodes, walkSpots, size: MAP_SIZE, tilesPerSide: MAP_TILES };
+  // Phone booths: the job boards of this city, always on a pavement corner.
+  const phoneRng = makeRng(seed ^ 0x51ed270b);
+  const phones = [];
+  const usedSpots = new Set();
+  for (let n = 0; n < 18 && walkSpots.length; n++) {
+    let idx = (phoneRng() * walkSpots.length) | 0;
+    for (let tries = 0; tries < 8 && usedSpots.has(idx); tries++) idx = (phoneRng() * walkSpots.length) | 0;
+    usedSpots.add(idx);
+    const spot = walkSpots[idx];
+    phones.push({ id: n, x: spot.x, y: spot.y });
+  }
+
+  // Pay 'n' Spray: an open garage bay on the kerb of a block, wide enough to
+  // drive into. Both tile rows it covers (pavement + road) are drivable.
+  const sprayRng = makeRng(seed ^ 0x2545f491);
+  const sprayShops = [];
+  const takenBlocks = new Set();
+  for (let n = 0; n < 4; n++) {
+    let cx = 0, cy = 0, key = '';
+    for (let tries = 0; tries < 12; tries++) {
+      cx = (sprayRng() * GRID) | 0;
+      cy = (sprayRng() * GRID) | 0;
+      key = cx + ':' + cy;
+      if (!takenBlocks.has(key)) break;
+    }
+    takenBlocks.add(key);
+    const bx = cx * CELL_TILES + ROAD_TILES;
+    const by = cy * CELL_TILES + ROAD_TILES;
+    sprayShops.push({
+      id: n,
+      x: (bx + 3) * TILE,
+      y: (by - 1) * TILE,
+      w: 4 * TILE,
+      h: 2 * TILE
+    });
+  }
+
+  const city = {
+    seed, tiles, solid, buildings, props, nodes, walkSpots, phones, sprayShops,
+    size: MAP_SIZE, tilesPerSide: MAP_TILES
+  };
   city.pickupSpots = buildPickupSpots(city, makeRng(seed ^ 0x9e3779b9));
   return city;
+}
+
+export function inRect(r, x, y) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
 function splitBlock(rng, r, count) {

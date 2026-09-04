@@ -176,7 +176,7 @@ function buildSnapshot(player) {
   }
   for (const p of world.peds.values()) {
     if (!nearPed(p.x, p.y)) continue;
-    ents.push([E_PED, p.id, r0(p.x), r0(p.y), r3(p.angle), p.state]);
+    ents.push([E_PED, p.id, r0(p.x), r0(p.y), r3(p.angle), p.state, p.targetOf === player.id ? 1 : 0]);
   }
   for (const pu of world.pickups.values()) {
     if (!pu.active || !near(pu.x, pu.y)) continue;
@@ -197,7 +197,15 @@ function buildSnapshot(player) {
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),
-    cn: car ? CAR_TYPES[car.kind].name : ''
+    cn: car ? CAR_TYPES[car.kind].name : '',
+    ms: player.mission ? {
+      k: player.mission.kind,
+      s: player.mission.stage,
+      x: r0(player.mission.x),
+      y: r0(player.mission.y),
+      r: player.mission.radius,
+      t: Math.max(0, Math.round((player.mission.endsAt - world.time) * 10) / 10)
+    } : null
   };
 
   const evs = [];

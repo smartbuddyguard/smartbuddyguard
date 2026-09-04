@@ -274,6 +274,21 @@ function consumeEvents() {
         if (vol > 0.03) sfx.crash(ev.m * vol);
         if (d < 400) renderer.shake(6 * ev.m);
         break;
+      case 'mission':
+        if (ev.id === ME) {
+          const names = { 1: 'Wagen abliefern', 2: 'Kurierfahrt', 3: 'Zielperson' };
+          if (ev.state === 'start') { sfx.pickup(); toast(`Auftrag angenommen: ${names[ev.k]} · $${ev.rw}`, 3200); }
+          else if (ev.state === 'stage') toast('Erster Halt geschafft – weiter zum nächsten Ziel', 2400);
+          else if (ev.state === 'done') { sfx.pickup(); toast(`Auftrag erledigt · +$${ev.rw}${ev.bonus ? ` (Zeitbonus $${ev.bonus})` : ''}`, 3400); }
+          else { sfx.hurt(); toast(ev.reason === 'time' ? 'Zeit abgelaufen – Auftrag geplatzt' : 'Auftrag geplatzt', 2600); }
+        }
+        break;
+      case 'spray':
+        if (ev.id === ME) {
+          sfx.pickup();
+          toast(ev.stars > 0 ? `Neu lackiert – Fahndung gelöscht (−$${ev.cost})` : `Neu lackiert und repariert (−$${ev.cost})`, 2600);
+        }
+        break;
       case 'pickup':
         if (ev.id === ME) {
           sfx.pickup();
@@ -304,6 +319,12 @@ function youFrom() {
     cash: player.cash, k: player.kills, d: player.deaths,
     iv: [player.ammo[1] | 0, player.ammo[2] | 0, player.ammo[3] | 0, player.ammo[4] | 0],
     ow: (player.owned[1] ? 1 : 0) | (player.owned[2] ? 2 : 0) | (player.owned[3] ? 4 : 0) | (player.owned[4] ? 8 : 0),
+    ms: player.mission ? {
+      k: player.mission.kind, s: player.mission.stage,
+      x: Math.round(player.mission.x), y: Math.round(player.mission.y),
+      r: player.mission.radius,
+      t: Math.max(0, Math.round((player.mission.endsAt - world.time) * 10) / 10)
+    } : null,
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),
@@ -398,6 +419,9 @@ function draw(dt, aim, inp) {
   renderer.updateEffects(dt);
   renderer.begin(dt);
   renderer.drawCity();
+  renderer.drawSprayShops(state.time);
+  renderer.drawPhones(state.time);
+  if (state.you && state.you.ms) renderer.drawMissionMarker(state.you.ms, state.time);
 
   // The whole city is simulated locally, so cull to the visible area before
   // drawing – on a phone that is the difference between 60 and 30 fps.
@@ -408,7 +432,7 @@ function draw(dt, aim, inp) {
     if (pu.active && visible(pu)) renderer.drawPickup(pu, state.time);
   }
   for (const ped of world.peds.values()) {
-    if (visible(ped)) renderer.drawPed(ped);
+    if (visible(ped)) renderer.drawPed({ ...ped, target: ped.targetOf === ME });
   }
   for (const c of world.cars.values()) {
     if (!visible(c)) continue;

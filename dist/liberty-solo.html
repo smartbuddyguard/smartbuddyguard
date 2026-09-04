@@ -506,9 +506,53 @@ function generateCity(seed) {
     }
   }
 
-  const city = { seed, tiles, solid, buildings, props, nodes, walkSpots, size: MAP_SIZE, tilesPerSide: MAP_TILES };
+  // Phone booths: the job boards of this city, always on a pavement corner.
+  const phoneRng = makeRng(seed ^ 0x51ed270b);
+  const phones = [];
+  const usedSpots = new Set();
+  for (let n = 0; n < 18 && walkSpots.length; n++) {
+    let idx = (phoneRng() * walkSpots.length) | 0;
+    for (let tries = 0; tries < 8 && usedSpots.has(idx); tries++) idx = (phoneRng() * walkSpots.length) | 0;
+    usedSpots.add(idx);
+    const spot = walkSpots[idx];
+    phones.push({ id: n, x: spot.x, y: spot.y });
+  }
+
+  // Pay 'n' Spray: an open garage bay on the kerb of a block, wide enough to
+  // drive into. Both tile rows it covers (pavement + road) are drivable.
+  const sprayRng = makeRng(seed ^ 0x2545f491);
+  const sprayShops = [];
+  const takenBlocks = new Set();
+  for (let n = 0; n < 4; n++) {
+    let cx = 0, cy = 0, key = '';
+    for (let tries = 0; tries < 12; tries++) {
+      cx = (sprayRng() * GRID) | 0;
+      cy = (sprayRng() * GRID) | 0;
+      key = cx + ':' + cy;
+      if (!takenBlocks.has(key)) break;
+    }
+    takenBlocks.add(key);
+    const bx = cx * CELL_TILES + ROAD_TILES;
+    const by = cy * CELL_TILES + ROAD_TILES;
+    sprayShops.push({
+      id: n,
+      x: (bx + 3) * TILE,
+      y: (by - 1) * TILE,
+      w: 4 * TILE,
+      h: 2 * TILE
+    });
+  }
+
+  const city = {
+    seed, tiles, solid, buildings, props, nodes, walkSpots, phones, sprayShops,
+    size: MAP_SIZE, tilesPerSide: MAP_TILES
+  };
   city.pickupSpots = buildPickupSpots(city, makeRng(seed ^ 0x9e3779b9));
   return city;
+}
+
+function inRect(r, x, y) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
 function splitBlock(rng, r, count) {
@@ -747,6 +791,7 @@ class World {
     this.pickups = new Map();
     this.events = [];
     this.nextId = 1;
+    this.phoneCd = new Map();   // phone id -> time it can hand out the next job
     this.time = 0;
     this.tick = 0;
     this.rosterDirty = true;
@@ -869,7 +914,8 @@ class World {
       owned: { 1: false, 2: false, 3: false, 4: false },
       wanted: 0, wantedTimer: 0, kills: 0, deaths: 0, cash: 0, score: 0,
       carId: null, fireCd: 0, input: emptyInput(), lastSeq: 0, enterLatch: false,
-      switchLatch: false, hitFlash: 0, joinedAt: this.time
+      switchLatch: false, hitFlash: 0, joinedAt: this.time,
+      mission: null, sprayCd: 0
     };
     this.players.set(id, p);
     this.rosterDirty = true;
@@ -914,6 +960,8 @@ class World {
     this.updateCarCollisions(dt);
     this.updatePolice(dt);
     this.updatePickups(dt);
+    this.updateMissions(dt);
+    this.updateSprayShops(dt);
     if (this.tick % 60 === 0) this.maintainWorld();
   }
 
@@ -983,6 +1031,7 @@ class World {
       } else {
         stepPlayer(this.city, p, { mx: p.input.mx, my: p.input.my }, dt);
         if (p.input.fire) this.fireWeapon(p, p.input.aim || p.angle, null);
+        if (!p.mission) this.tryPhone(p);
       }
     }
   }
@@ -1175,6 +1224,7 @@ class World {
     p.wantedTimer = 0;
     const car = p.carId ? this.cars.get(p.carId) : null;
     if (car) { car.driver = null; p.carId = null; }
+    if (p.mission) this.failMission(p, 'dead');
     this.events.push({ t: 'blood', x: p.x, y: p.y, kind: 'player', big: 1 });
 
     // Whatever they were carrying stays on the pavement for the next person.
@@ -1212,6 +1262,10 @@ class World {
         this.addWanted(killer, CRIME_KILL_PED);
       }
       if (this.rng() < 0.35) this.dropLoot(ped.x, ped.y, P_CASH, 40 + this.randInt(90), 30);
+      if (ped.targetOf) {
+        const client = this.players.get(ped.targetOf);
+        if (client && client.mission && client.mission.pedId === ped.id) this.completeMission(client);
+      }
     }
   }
 
@@ -1477,6 +1531,148 @@ class World {
     const car = this.makeCar(best.x, best.y, this.rand(-Math.PI, Math.PI), CAR_POLICE);
     car.siren = true;
     return car;
+  }
+
+
+  // ---------------------------------------------------------------- missions
+
+  // Walking into a phone booth without a job hands you one, GTA-1 style.
+  tryPhone(p) {
+    for (const ph of this.city.phones) {
+      if ((this.phoneCd.get(ph.id) || 0) > this.time) continue;
+      if (dist2(p.x, p.y, ph.x, ph.y) > 30 * 30) continue;
+      this.startMission(p, ph);
+      return;
+    }
+  }
+
+  farSpot(from, minDist) {
+    for (let tries = 0; tries < 24; tries++) {
+      const n = this.city.nodes[this.randomNode()];
+      if (dist2(n.x, n.y, from.x, from.y) > minDist * minDist) return { x: n.x, y: n.y };
+    }
+    const n = this.city.nodes[this.randomNode()];
+    return { x: n.x, y: n.y };
+  }
+
+  startMission(p, phone) {
+    const kind = 1 + this.randInt(3);
+    const m = { kind, stage: 0, phone: phone.id, radius: 66, pedId: 0 };
+
+    if (kind === 3) {
+      // Find someone far enough away to make it a trip, not a walk.
+      let best = null, bestD = 0;
+      for (const ped of this.peds.values()) {
+        if (ped.targetOf) continue;
+        const d = dist2(ped.x, ped.y, p.x, p.y);
+        if (d > bestD && d > 500 * 500) { bestD = d; best = ped; }
+      }
+      if (!best) { m.kind = 2; } else {
+        best.targetOf = p.id;
+        m.pedId = best.id;
+        m.x = best.x; m.y = best.y;
+        m.radius = 40;
+        m.reward = 1200;
+        m.endsAt = this.time + 120;
+      }
+    }
+
+    if (m.kind === 1) {                       // bring a car to the drop-off
+      const spot = this.farSpot(p, 600);
+      m.x = spot.x; m.y = spot.y;
+      m.reward = 900;
+      m.endsAt = this.time + 100;
+    } else if (m.kind === 2) {                // two stop courier run
+      const a = this.farSpot(p, 450);
+      m.x = a.x; m.y = a.y;
+      m.second = this.farSpot(a, 500);
+      m.reward = 800;
+      m.endsAt = this.time + 115;
+    }
+
+    p.mission = m;
+    this.phoneCd.set(phone.id, this.time + 25);
+    this.events.push({ t: 'mission', id: p.id, state: 'start', k: m.kind, x: m.x, y: m.y, rw: m.reward });
+    this.rosterDirty = true;
+  }
+
+  updateMissions(dt) {
+    for (const p of this.players.values()) {
+      const m = p.mission;
+      if (!m) continue;
+
+      if (!p.alive) { this.failMission(p, 'dead'); continue; }
+      if (this.time > m.endsAt) { this.failMission(p, 'time'); continue; }
+
+      if (m.kind === 3) {
+        const ped = this.peds.get(m.pedId);
+        if (!ped) { this.completeMission(p); continue; }
+        m.x = ped.x; m.y = ped.y;                     // the marker follows them
+        continue;
+      }
+
+      const reached = dist2(p.x, p.y, m.x, m.y) < m.radius * m.radius;
+      if (!reached) continue;
+
+      if (m.kind === 1) {
+        if (!p.carId) continue;                       // the client wants the car, not you
+        this.completeMission(p);
+      } else if (m.kind === 2) {
+        if (m.stage === 0) {
+          m.stage = 1;
+          m.x = m.second.x; m.y = m.second.y;
+          this.events.push({ t: 'mission', id: p.id, state: 'stage', k: m.kind, x: m.x, y: m.y });
+        } else {
+          this.completeMission(p);
+        }
+      }
+    }
+  }
+
+  completeMission(p) {
+    const m = p.mission;
+    if (!m) return;
+    const bonus = Math.round(Math.max(0, m.endsAt - this.time) * 4);
+    const total = m.reward + bonus;
+    p.cash += total;
+    p.score += Math.round(total / 10);
+    if (m.pedId) { const ped = this.peds.get(m.pedId); if (ped) ped.targetOf = 0; }
+    p.mission = null;
+    this.events.push({ t: 'mission', id: p.id, state: 'done', k: m.kind, rw: total, bonus });
+    this.rosterDirty = true;
+  }
+
+  failMission(p, reason) {
+    const m = p.mission;
+    if (!m) return;
+    if (m.pedId) { const ped = this.peds.get(m.pedId); if (ped) ped.targetOf = 0; }
+    p.mission = null;
+    this.events.push({ t: 'mission', id: p.id, state: 'fail', k: m.kind, reason });
+    this.rosterDirty = true;
+  }
+
+  // ------------------------------------------------------------ pay 'n' spray
+
+  updateSprayShops(dt) {
+    for (const p of this.players.values()) {
+      if (!p.alive || !p.carId || p.sprayCd > this.time) continue;
+      const car = this.cars.get(p.carId);
+      if (!car || car.speed > 110) continue;
+      for (const shop of this.city.sprayShops) {
+        if (!inRect(shop, car.x, car.y)) continue;
+        const cost = Math.min(p.cash, 250);
+        p.cash -= cost;
+        car.hp = car.maxHp;
+        car.colorSeed = this.randInt(1000);
+        const stars = Math.floor(p.wanted);
+        p.wanted = 0;
+        p.wantedTimer = 0;
+        p.sprayCd = this.time + 20;
+        this.rosterDirty = true;
+        this.events.push({ t: 'spray', x: car.x, y: car.y, id: p.id, cost, stars });
+        break;
+      }
+    }
   }
 
   // ----------------------------------------------------------------- pickups
@@ -1848,6 +2044,90 @@ class Renderer {
     ctx.restore();
   }
 
+
+  // ------------------------------------------------------- city landmarks
+
+  drawPhones(time) {
+    const ctx = this.ctx;
+    const b = this.viewBounds(40);
+    for (const ph of this.city.phones) {
+      if (ph.x < b.x0 || ph.x > b.x1 || ph.y < b.y0 || ph.y > b.y1) continue;
+      const pulse = 0.5 + Math.sin(time * 2.5 + ph.id) * 0.5;
+      ctx.save();
+      ctx.translate(ph.x, ph.y);
+      ctx.fillStyle = `rgba(90,190,255,${0.10 + pulse * 0.12})`;
+      ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,.3)';
+      this.roundRect(-6, -6, 15, 15, 3); ctx.fill();
+      ctx.fillStyle = '#2f6fa8';                      // booth
+      this.roundRect(-7, -8, 14, 15, 3); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.45)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#d8e6f2';                      // handset
+      this.roundRect(-3.5, -4.5, 7, 3, 1.4); ctx.fill();
+      this.roundRect(-3.5, -1, 7, 5, 1.4); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  drawSprayShops(time) {
+    const ctx = this.ctx;
+    const b = this.viewBounds(60);
+    for (const shop of this.city.sprayShops) {
+      if (shop.x > b.x1 || shop.x + shop.w < b.x0 || shop.y > b.y1 || shop.y + shop.h < b.y0) continue;
+      ctx.save();
+      ctx.translate(shop.x, shop.y);
+
+      ctx.fillStyle = '#2b3240';                      // bay floor
+      ctx.fillRect(0, 0, shop.w, shop.h);
+      ctx.save();                                     // hazard stripes
+      ctx.beginPath(); ctx.rect(0, 0, shop.w, shop.h); ctx.clip();
+      ctx.fillStyle = 'rgba(255,210,63,.22)';
+      for (let x = -shop.h; x < shop.w; x += 22) {
+        ctx.beginPath();
+        ctx.moveTo(x, shop.h); ctx.lineTo(x + 11, shop.h);
+        ctx.lineTo(x + 11 + shop.h, 0); ctx.lineTo(x + shop.h, 0);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.strokeStyle = 'rgba(255,210,63,.5)';        // bay outline
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, shop.w - 2, shop.h - 2);
+
+      ctx.fillStyle = '#1b2029';                      // canopy on the pavement side
+      ctx.fillRect(0, shop.h - 7, shop.w, 7);
+      ctx.fillStyle = '#ffd23f';
+      ctx.font = 'bold 9px ui-sans-serif, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SPRAY', shop.w / 2, shop.h - 1.5);
+      ctx.restore();
+    }
+  }
+
+  drawMissionMarker(m, time) {
+    const ctx = this.ctx;
+    const pulse = 0.5 + Math.sin(time * 3) * 0.5;
+    const color = m.k === 3 ? '255,95,77' : '255,210,63';
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.fillStyle = `rgba(${color},${0.10 + pulse * 0.10})`;
+    ctx.beginPath(); ctx.arc(0, 0, m.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgba(${color},${0.55 + pulse * 0.35})`;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -time * 22;
+    ctx.beginPath(); ctx.arc(0, 0, m.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    const lift = 6 + pulse * 4;                       // bobbing chevron
+    ctx.fillStyle = `rgba(${color},.9)`;
+    ctx.beginPath();
+    ctx.moveTo(0, -lift); ctx.lineTo(-7, -lift - 11); ctx.lineTo(7, -lift - 11);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
   // ---------------------------------------------------------- characters
 
   // Every character is built from the same parts: legs that swing with the
@@ -2107,6 +2387,13 @@ class Renderer {
   drawPed(p) {
     const look = pedLook(p.id);
     const g = this.gaitPhase('n' + p.id, p.x, p.y);
+    if (p.target) {
+      const ctx = this.ctx;
+      const pulse = 0.5 + Math.sin(performance.now() / 220) * 0.5;
+      ctx.strokeStyle = `rgba(255,95,77,${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 15 + pulse * 3, 0, Math.PI * 2); ctx.stroke();
+    }
     this.drawCharacter({
       x: p.x, y: p.y, body: p.angle, aim: p.angle,
       phase: g.phase, moving: g.moving, scale: 0.95,
@@ -2355,6 +2642,11 @@ function pedLook(id) {
 
 
 const WEAPON_LABELS = ['Fäuste', 'Pistole', 'Uzi', 'Schrotflinte', 'Raketenwerfer'];
+const MISSION_TITLES = {
+  1: 'Wagen zum Treffpunkt bringen',
+  2: ['Ersten Halt anfahren', 'Zur Übergabe fahren'],
+  3: 'Zielperson ausschalten'
+};
 const PICKUP_LABELS = {
   1: 'Pistole', 2: 'Uzi', 3: 'Schrotflinte', 4: 'Raketenwerfer',
   5: 'Medikit', 6: 'Panzerung', 7: 'Geld'
@@ -2388,6 +2680,7 @@ class Hud {
     this.drawNameLabels(ctx);
     if (you) {
       this.drawStatus(ctx, you, s, state);
+      if (you.ms) { this.drawMissionBar(ctx, you.ms, w, s); this.drawObjectiveArrow(ctx, you.ms, w, h); }
       this.drawMinimap(ctx, state, w, s);
       this.drawKillFeed(ctx, w, time, s);
       if (!you.al) this.drawDeath(ctx, w, h, you);
@@ -2493,7 +2786,12 @@ class Hud {
     for (const pu of state.entities.values()) {
       if (pu.type === 4) dot(pu.x, pu.y, '#7ce08a', 1.4);
     }
-    if (state.you) dot(state.local.x, state.local.y, '#ffd23f', 3);
+    for (const ph of this.r.city.phones) dot(ph.x, ph.y, 'rgba(90,190,255,.75)', 1.2);
+    if (state.you && state.you.ms) {
+      const m = state.you.ms;
+      dot(m.x, m.y, m.k === 3 ? '#ff5f4d' : '#ffd23f', 3.4);
+    }
+    if (state.you) dot(state.local.x, state.local.y, '#ffffff', 3);
 
     ctx.strokeStyle = 'rgba(255,255,255,.25)';
     ctx.lineWidth = 1;
@@ -2541,6 +2839,75 @@ class Hud {
     ctx.fillText(label, 14 + s.left, h - 10 - s.bottom);
   }
 
+
+
+  // -------------------------------------------------------------- missions
+
+  drawMissionBar(ctx, m, w, s) {
+    const title = m.k === 2 ? MISSION_TITLES[2][m.s] : MISSION_TITLES[m.k];
+    const pw = Math.min(320, w - 40);
+    const x = Math.round((w - pw) / 2);
+    const y = 96 + s.top;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(12,15,21,.82)';
+    this.panelPath(ctx, x, y, pw, 44, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,210,63,.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = '600 10px ui-monospace, monospace';
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillText('AUFTRAG', x + 12, y + 15);
+    ctx.font = '700 13px ui-sans-serif, sans-serif';
+    ctx.fillStyle = '#e8ecf4';
+    ctx.fillText(title, x + 12, y + 31);
+
+    ctx.textAlign = 'right';
+    ctx.font = '700 14px ui-monospace, monospace';
+    ctx.fillStyle = m.t < 15 ? '#ff5f4d' : '#e8ecf4';
+    ctx.fillText(`${Math.ceil(m.t)}s`, x + pw - 12, y + 26);
+
+    ctx.fillStyle = 'rgba(255,255,255,.10)';          // time bar
+    ctx.fillRect(x + 12, y + 37, pw - 24, 3);
+    ctx.fillStyle = m.t < 15 ? '#ff5f4d' : '#ffd23f';
+    ctx.fillRect(x + 12, y + 37, (pw - 24) * clamp(m.t / 120, 0, 1), 3);
+    ctx.restore();
+  }
+
+  // Points at the objective whenever it is off screen.
+  drawObjectiveArrow(ctx, m, w, h) {
+    const p = this.r.worldToScreen(m.x, m.y);
+    const pad = 54;
+    if (p.x > pad && p.x < w - pad && p.y > pad && p.y < h - pad) return;
+    const cx = w / 2, cy = h / 2;
+    const a = Math.atan2(p.y - cy, p.x - cx);
+    const rx = (w / 2 - pad) / Math.abs(Math.cos(a) || 1e-6);
+    const ry = (h / 2 - pad) / Math.abs(Math.sin(a) || 1e-6);
+    const d = Math.min(rx, ry);
+    const ax = cx + Math.cos(a) * d;
+    const ay = cy + Math.sin(a) * d;
+    const dist = Math.round(Math.hypot(m.x - this.r.cam.x, m.y - this.r.cam.y) / 10);
+
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(a);
+    ctx.fillStyle = m.k === 3 ? 'rgba(255,95,77,.92)' : 'rgba(255,210,63,.92)';
+    ctx.beginPath();
+    ctx.moveTo(16, 0); ctx.lineTo(-8, -11); ctx.lineTo(-3, 0); ctx.lineTo(-8, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '700 11px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(232,236,244,.85)';
+    ctx.fillText(`${dist} m`, ax - Math.cos(a) * 22, ay - Math.sin(a) * 22 + 4);
+    ctx.restore();
+  }
 
   // ------------------------------------------------------------- inventory
 
@@ -3489,6 +3856,21 @@ function consumeEvents() {
         if (vol > 0.03) sfx.crash(ev.m * vol);
         if (d < 400) renderer.shake(6 * ev.m);
         break;
+      case 'mission':
+        if (ev.id === ME) {
+          const names = { 1: 'Wagen abliefern', 2: 'Kurierfahrt', 3: 'Zielperson' };
+          if (ev.state === 'start') { sfx.pickup(); toast(`Auftrag angenommen: ${names[ev.k]} · $${ev.rw}`, 3200); }
+          else if (ev.state === 'stage') toast('Erster Halt geschafft – weiter zum nächsten Ziel', 2400);
+          else if (ev.state === 'done') { sfx.pickup(); toast(`Auftrag erledigt · +$${ev.rw}${ev.bonus ? ` (Zeitbonus $${ev.bonus})` : ''}`, 3400); }
+          else { sfx.hurt(); toast(ev.reason === 'time' ? 'Zeit abgelaufen – Auftrag geplatzt' : 'Auftrag geplatzt', 2600); }
+        }
+        break;
+      case 'spray':
+        if (ev.id === ME) {
+          sfx.pickup();
+          toast(ev.stars > 0 ? `Neu lackiert – Fahndung gelöscht (−$${ev.cost})` : `Neu lackiert und repariert (−$${ev.cost})`, 2600);
+        }
+        break;
       case 'pickup':
         if (ev.id === ME) {
           sfx.pickup();
@@ -3519,6 +3901,12 @@ function youFrom() {
     cash: player.cash, k: player.kills, d: player.deaths,
     iv: [player.ammo[1] | 0, player.ammo[2] | 0, player.ammo[3] | 0, player.ammo[4] | 0],
     ow: (player.owned[1] ? 1 : 0) | (player.owned[2] ? 2 : 0) | (player.owned[3] ? 4 : 0) | (player.owned[4] ? 8 : 0),
+    ms: player.mission ? {
+      k: player.mission.kind, s: player.mission.stage,
+      x: Math.round(player.mission.x), y: Math.round(player.mission.y),
+      r: player.mission.radius,
+      t: Math.max(0, Math.round((player.mission.endsAt - world.time) * 10) / 10)
+    } : null,
     car: car ? car.id : 0, ck: car ? car.kind : -1,
     chp: car ? Math.round((car.hp / car.maxHp) * 100) : 0,
     sp: car ? Math.round(car.speed) : Math.round(Math.hypot(player.vx, player.vy)),
@@ -3613,6 +4001,9 @@ function draw(dt, aim, inp) {
   renderer.updateEffects(dt);
   renderer.begin(dt);
   renderer.drawCity();
+  renderer.drawSprayShops(state.time);
+  renderer.drawPhones(state.time);
+  if (state.you && state.you.ms) renderer.drawMissionMarker(state.you.ms, state.time);
 
   // The whole city is simulated locally, so cull to the visible area before
   // drawing – on a phone that is the difference between 60 and 30 fps.
@@ -3623,7 +4014,7 @@ function draw(dt, aim, inp) {
     if (pu.active && visible(pu)) renderer.drawPickup(pu, state.time);
   }
   for (const ped of world.peds.values()) {
-    if (visible(ped)) renderer.drawPed(ped);
+    if (visible(ped)) renderer.drawPed({ ...ped, target: ped.targetOf === ME });
   }
   for (const c of world.cars.values()) {
     if (!visible(c)) continue;

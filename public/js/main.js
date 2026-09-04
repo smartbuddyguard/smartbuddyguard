@@ -202,6 +202,7 @@ function applySnapshot(msg) {
       e.hp = a[5]; e.moving = a[6] & 1; e.hit = (a[6] & 2) === 2; e.weapon = a[6] >> 3;
     } else if (type === E_PED) {
       e.state = a[5];
+      e.target = a[6] === 1;
     } else if (type === E_PICKUP) {
       e.kind = a[4];
       e.temp = a[5] === 1;
@@ -300,8 +301,40 @@ function handleEvent(ev, now) {
       if (mine && !you) toast(`Ausgeschaltet: ${ev.victimName} (+$250)`, 2000);
       break;
     }
+    case 'mission':
+      if (ev.id === state.me) handleMissionEvent(ev);
+      break;
+    case 'spray':
+      if (ev.id === state.me) {
+        sfx.pickup();
+        toast(ev.stars > 0
+          ? `Neu lackiert – Fahndung gelöscht (−$${ev.cost})`
+          : `Neu lackiert und repariert (−$${ev.cost})`, 2600);
+      }
+      break;
     case 'joined': toast(`${ev.name} ist beigetreten`); break;
     case 'left': toast(`${ev.name} hat das Spiel verlassen`); break;
+  }
+}
+
+function handleMissionEvent(ev) {
+  const names = { 1: 'Wagen abliefern', 2: 'Kurierfahrt', 3: 'Zielperson' };
+  switch (ev.state) {
+    case 'start':
+      sfx.pickup();
+      toast(`Auftrag angenommen: ${names[ev.k]} · $${ev.rw}`, 3200);
+      break;
+    case 'stage':
+      toast('Erster Halt geschafft – weiter zum nächsten Ziel', 2400);
+      break;
+    case 'done':
+      sfx.pickup();
+      toast(`Auftrag erledigt · +$${ev.rw}${ev.bonus ? ` (Zeitbonus $${ev.bonus})` : ''}`, 3400);
+      break;
+    case 'fail':
+      sfx.hurt();
+      toast(ev.reason === 'time' ? 'Zeit abgelaufen – Auftrag geplatzt' : 'Auftrag geplatzt', 2600);
+      break;
   }
 }
 
@@ -500,6 +533,9 @@ function drawFrame(dt, now) {
   renderer.updateEffects(dt);
   renderer.begin(dt);
   renderer.drawCity();
+  renderer.drawSprayShops(state.time);
+  renderer.drawPhones(state.time);
+  if (state.you && state.you.ms) renderer.drawMissionMarker(state.you.ms, state.time);
 
   // pickups first, then people, then cars
   const cars = [];
@@ -508,7 +544,7 @@ function drawFrame(dt, now) {
     if (e.type === E_PICKUP) {
       renderer.drawPickup({ x: s.x, y: s.y, kind: e.kind, id: e.id }, state.time);
     } else if (e.type === E_PED) {
-      renderer.drawPed({ x: s.x, y: s.y, angle: s.a, id: e.id, state: e.state });
+      renderer.drawPed({ x: s.x, y: s.y, angle: s.a, id: e.id, state: e.state, target: e.target });
     } else if (e.type === E_PLAYER) {
       const meta = state.rosterById.get(e.id);
       renderer.drawPlayer(
