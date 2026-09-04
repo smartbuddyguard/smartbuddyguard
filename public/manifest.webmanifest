@@ -1,16 +1,15 @@
 {
-  "name": "Liberty Clone – Top-Down Multiplayer",
-  "short_name": "Liberty",
-  "description": "GTA-1-artiger Top-Down Open-World-Shooter mit Echtzeit-Multiplayer.",
-  "start_url": ".",
-  "scope": ".",
+  "name": "TeleGroove Messenger",
+  "short_name": "TeleGroove",
+  "description": "Messenger mit Echtzeit-Chats, Gruppen, Medien und Sprachnachrichten.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "orientation": "landscape",
-  "background_color": "#11141b",
-  "theme_color": "#11141b",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#3390ec",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

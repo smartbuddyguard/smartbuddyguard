@@ -1,19 +1,16 @@
 {
-  "name": "liberty-clone",
+  "name": "telegroove",
   "version": "1.0.0",
-  "description": "Top-down GTA-1 style open world game with realtime multiplayer, playable in the browser and on iPhone (PWA).",
+  "description": "WhatsApp-Klon im Telegram-Design: Echtzeit-Messenger mit Gruppen, Medien, Sprachnachrichten und Lesebestätigungen. Läuft ohne npm-Abhängigkeiten.",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "build:solo": "node scripts/build-solo.mjs",
+    "seed": "node scripts/seed.mjs",
     "icons": "node scripts/make-icons.mjs"
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "ws": "^8.18.0"
   }
 }

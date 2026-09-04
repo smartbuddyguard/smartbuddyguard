@@ -1,53 +1,54 @@
-// Caches the client shell so the game starts instantly (and the menu still
-// loads without a network). Gameplay itself always needs the websocket.
-const CACHE = 'liberty-v3';
-const ASSETS = [
-  './',
-  'index.html',
-  'solo.html',
-  'style.css',
-  'manifest.webmanifest',
-  'js/main.js',
-  'js/solo.js',
-  'js/net.js',
-  'js/input.js',
-  'js/render.js',
-  'js/hud.js',
-  'js/audio.js',
-  'js/controls.js',
-  '/shared/constants.js',
-  '/shared/city.js',
-  '/shared/physics.js',
-  '/shared/world.js',
-  '/shared/util.js',
-  'icons/icon-180.png',
-  'icons/icon-192.png',
-  'icons/icon-512.png'
+// Service Worker: App-Hülle offline verfügbar halten, API immer live abfragen.
+const CACHE = 'telegroove-v1';
+const SHELL = [
+  '/', '/index.html', '/css/app.css',
+  '/js/app.js', '/js/api.js', '/js/state.js', '/js/socket.js', '/js/util.js',
+  '/js/ui.js', '/js/chat.js', '/js/chatlist.js', '/js/composer.js',
+  '/js/dialogs.js', '/js/emoji.js', '/js/info.js',
+  '/manifest.webmanifest', '/icons/icon-192.png'
 ];
 
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  // Network first so a redeploy is picked up, cache as offline fallback.
-  e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
-        return res;
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET') return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
+
+  // Hochgeladene Medien dürfen dauerhaft im Cache liegen.
+  if (url.pathname.startsWith('/media/')) {
+    event.respondWith(
+      caches.open(CACHE).then(async (cache) => {
+        const hit = await cache.match(event.request);
+        if (hit) return hit;
+        const response = await fetch(event.request);
+        if (response.ok) cache.put(event.request, response.clone());
+        return response;
       })
-      .catch(() => caches.match(e.request).then(r => r || caches.match('index.html')))
+    );
+    return;
+  }
+
+  // App-Hülle: Netz zuerst, Cache als Rückfallebene.
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok && url.origin === location.origin) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request).then((hit) => hit || caches.match('/index.html')))
   );
 });

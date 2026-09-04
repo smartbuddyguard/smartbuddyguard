@@ -1,222 +1,193 @@
-# Liberty Clone – GTA-1-artiger Top-Down-Shooter mit Multiplayer
+# TeleGroove
 
-Ein komplettes, spielbares Open-World-Spiel im Stil von **GTA 1**: Vogelperspektive,
-frei begehbare Stadt, Autos klauen, Verkehr, Passanten, Waffen, Fahndungslevel und
-Polizei – als **Echtzeit-Multiplayer** im Browser. Läuft ohne App Store direkt im
-**Safari auf dem iPhone** und lässt sich dort als PWA auf den Home-Bildschirm legen.
+Ein **WhatsApp-Klon im Telegram-Design**: ein voll funktionsfähiger Echtzeit-Messenger
+mit Konten, Kontakten, Einzel- und Gruppenchats, Medien, Sprachnachrichten,
+Lesebestätigungen und Nachtmodus.
 
-Alles ist selbst implementiert (Canvas-2D-Grafik, Physik, KI, Netcode) – es werden
-keinerlei Originaldaten oder Assets von Rockstar/DMA verwendet.
+Läuft **ohne eine einzige npm-Abhängigkeit** — inklusive selbst implementiertem
+WebSocket-Server. Node.js 18+ genügt.
+
+```bash
+node scripts/seed.mjs   # optional: Demo-Konten anlegen
+npm start               # http://localhost:3000
+```
 
 ---
-
-## Sofort spielen (ohne Server)
-
-`dist/liberty-solo.html` ist der **Einzelspieler-Modus als eine einzige HTML-Datei** –
-Stadt, Verkehr, Polizei, Waffen, Sound, alles darin, kein Server, kein Internet nötig.
-Datei aufs iPhone schicken (AirDrop, iCloud, Mail) und in Safari öffnen, oder am Rechner
-doppelklicken. Neu bauen mit `npm run build:solo`.
-
-Mit laufendem Server erreichbar unter `/solo.html`.
 
 ## Schnellstart
 
 ```bash
-npm install
+git clone <dieses-repo>
+cd smartbuddyguard
+npm run seed            # legt drei Demo-Konten mit Beispielchats an
 npm start
-# -> http://localhost:3000
 ```
 
-Node.js 18 oder neuer wird benötigt (getestet mit Node 22). Einzige Abhängigkeit: `ws`.
+Dann `http://localhost:3000` öffnen. Die Demo-Konten haben alle das Passwort
+`demo1234`:
 
-## Auf dem iPhone spielen
+| Nummer            | Name           |
+|-------------------|----------------|
+| `+49 170 0000001` | Anna Beispiel  |
+| `+49 170 0000002` | Ben Muster     |
+| `+49 170 0000003` | Clara Schmidt  |
 
-1. Server auf einem Rechner im gleichen WLAN starten (`npm start`).
-2. Lokale IP des Rechners herausfinden:
-   * macOS: `ipconfig getifaddr en0`
-   * Linux: `hostname -I`
-   * Windows: `ipconfig`
-3. Am iPhone in Safari `http://<IP-des-Rechners>:3000` öffnen.
-4. **Als App installieren:** Teilen-Symbol → „Zum Home-Bildschirm“. Danach startet
-   das Spiel im Vollbild ohne Safari-Leisten.
-5. Gerät quer halten – das Spiel weist im Hochformat darauf hin.
+Zum Ausprobieren zu zweit: ein zweites Browserfenster im **privaten Modus**
+öffnen und dort ein anderes Konto benutzen — Nachrichten, Tippanzeige und
+Häkchen laufen zwischen beiden Fenstern live.
 
-Mehrere iPhones/Rechner können gleichzeitig dieselbe Adresse öffnen und spielen
-zusammen in derselben Stadt.
+Ohne `npm run seed` startet die App leer; jeder legt sich über **Registrieren**
+selbst ein Konto an.
 
-> Möchtest du über das Internet spielen (nicht nur im WLAN), stelle den Server hinter
-> HTTPS – der Client verbindet sich dann automatisch über `wss://`.
+### Konfiguration
 
-## Steuerung
+| Variable                | Standard   | Bedeutung                                       |
+|-------------------------|------------|-------------------------------------------------|
+| `PORT`                  | `3000`     | Port des Servers                                 |
+| `HOST`                  | `0.0.0.0`  | Netzwerkschnittstelle                            |
+| `DATA_DIR`              | `./data`   | Ablage für `db.json` und Uploads                 |
+| `DEFAULT_COUNTRY_CODE`  | `49`       | Vorwahl für national geschriebene Nummern (`0170…`) |
 
-Es gibt zwei Schemata, umschaltbar im Startmenü (im Solo-Modus auch in der Pause, im
-Multiplayer in der Punktetabelle). Die Wahl wird gespeichert.
+Im Handynetz oder LAN testen: `HOST=0.0.0.0 npm start` und vom Handy die
+IP-Adresse des Rechners aufrufen. Die App ist eine PWA und lässt sich über
+„Zum Home-Bildschirm“ installieren.
 
-**Modern** (Voreinstellung, gut für Touch): Der Stick zeigt, wohin du willst. Zu Fuß ist das
-die Laufrichtung, im Auto lenkt der Wagen selbstständig dorthin – drückst du gegen die
-Fahrtrichtung, bremst er erst in die Kurve und dreht um; im Stand setzt er zurück.
+---
 
-**Original** (wie GTA 1): Zu Fuß gehst du vor/zurück und drehst dich mit links/rechts.
-Im Auto sind links/rechts die Lenkung, vor Gas, zurück Bremse und dann Rückwärtsgang.
+## Funktionen
 
-| Aktion | Touch (iPhone) | Tastatur / Maus |
-|---|---|---|
-| Bewegen / Lenken | Joystick auf der linken Bildschirmhälfte (erscheint dort, wo du tippst) | `WASD` oder Pfeiltasten |
-| Schießen / Schlagen | Button **FEUER** | `Leertaste` oder linke Maustaste |
-| Auto betreten / verlassen | Button **EIN / AUS** | `E` |
-| Waffe wechseln (zu Fuß) | Button **WAFFE** | `Q` |
-| Handbremse / Drift (im Auto) | Button **BREMSE** | `Shift` |
-| Tasche / Inventar | Button **TASCHE** | `I` |
-| Waffe direkt wählen | Zeile in der Tasche antippen | `1`–`5` |
-| Punktetabelle bzw. Pause | Button **≡** oben rechts | `Tab` |
-| Auftrag annehmen | in eine Telefonzelle laufen | in eine Telefonzelle laufen |
-| Lackieren / Fahndung löschen | mit dem Auto in die Spray-Box fahren | dito |
+**Konten & Kontakte**
+- Registrierung und Anmeldung mit Telefonnummer und Passwort
+  (scrypt-Hash, 90 Tage gültige Sitzungs-Tokens)
+- Nummern werden normalisiert: `0170 1234567`, `0049 170 1234567` und
+  `+49 170 1234567` treffen dasselbe Konto
+- Profil mit Name, Info-Text und Profilbild, Passwortwechsel
+- Adressbuch mit eigenen Anzeigenamen, Nutzersuche über Name oder Nummer
 
-Zielen zu Fuß: Im Modern-Schema zielt die Figur in Laufrichtung und rastet leicht auf nahe
-Gegner ein; am Desktop übernimmt die Maus, sobald du sie bewegst. Im Original-Schema zielt
-sie immer dorthin, wohin du dich gedreht hast.
+**Chats**
+- Einzelchats und Gruppen mit Administrator, Mitgliederverwaltung und
+  Systemmeldungen („X hat die Gruppe erstellt“)
+- Anheften, Stummschalten, Archivieren; Filter für *Alle / Ungelesen /
+  Gruppen / Archiv* mit Zählern
+- Suche über Chats, Nutzer und Nachrichteninhalte, dazu eine Suche
+  innerhalb eines Chats mit Treffer-Hervorhebung
+- Entwürfe bleiben pro Chat erhalten, auch nach einem Gerätewechsel
 
-## Spielinhalt
+**Nachrichten**
+- Echtzeitversand über WebSocket, optimistisch dargestellt und mit
+  Sanduhr-Symbol bis zur Bestätigung
+- Status wie bei WhatsApp: ein Haken (gesendet), zwei Haken (zugestellt),
+  zwei farbige Haken (gelesen)
+- Antworten mit Zitat, Weiterleiten, Bearbeiten (Pfeil-hoch bearbeitet die
+  letzte eigene Nachricht), Löschen für alle
+- Emoji-Reaktionen, Emoji-Auswahl mit Kategorien und Verlauf
+- Bilder, Videos, Audio und beliebige Dateien bis 25 MB per Büroklammer,
+  Drag & Drop oder Einfügen aus der Zwischenablage; Bilder in der Großansicht
+- Sprachnachrichten mit eigenem Abspieler und Wellenanzeige
+- Tippanzeige, Online-Status und „zuletzt gesehen“
+- Tagestrenner, Nachrichtenbündelung, Sprechblasen-Zipfel, Verlauf wird
+  beim Hochscrollen nachgeladen
 
-* **Stadt:** 10 × 10 Häuserblocks (ca. 4600 × 4600 Spielwelt-Einheiten) mit Straßen­raster,
-  Gehwegen, Parks, Wasserflächen und Zebrastreifen – prozedural aus einem Seed erzeugt,
-  den alle Clients vom Server bekommen. Jeder Serverstart erzeugt eine neue Stadt
-  (fixierbar über `SEED=…`).
-* **Figuren:** Jede Person wird aus einzelnen Teilen gezeichnet – Hut mit Krempe und
-  Hutband in der Spielerfarbe, Kopf mit Nase (zeigt die Blickrichtung), Schultern, Torso,
-  Arme, Hände, Beine und Schuhe. Die Beine laufen in einem echten Schrittzyklus, dessen
-  Tempo aus der tatsächlich zurückgelegten Strecke kommt; der Oberkörper dreht sich in
-  Laufrichtung, Arme und Kopf zur Zielrichtung. In der Hand liegt sichtbar die aktuelle
-  Waffe (Pistole, Uzi mit Magazin, Schrotflinte mit Holzschaft, Raketenwerfer mit Visier).
-  Beim Gehen federt der Körper leicht, Hüfte und Oberkörper schwingen gegen die Beine, im
-  Stand atmet die Figur nur noch. Ein Schuss erzeugt Rückstoß und ein kurzes Mündungsfeuer,
-  ohne Waffe schlägt die Figur abwechselnd mit links und rechts zu.
-  Passanten bekommen aus ihrer ID deterministisch Hemd-, Hosen-, Haar- und Hautfarbe sowie
-  in etwa jedem dritten Fall einen Hut – auf allen Clients identisch, ohne ein einziges
-  zusätzliches Byte im Netzwerk.
-* **Fahrzeuge:** 7 Typen (Limousine, Taxi, Sportwagen, Transporter, Truck, Streifenwagen,
-  Käfer) mit eigenem Fahrverhalten, Grip, Tempo und Schadensmodell. Autos parken am
-  Straßenrand, fahren im Verkehr mit oder werden von der Polizei gefahren.
-  Gas, Bremse und Rückwärtsgang liegen wie im Original auf einer Achse: Ziehen bremst,
-  und erst im Stand legt der Wagen den Rückwärtsgang ein (max. 42 % der Vorwärtsgeschwindigkeit).
-  Die Limousine beschleunigt in 2,7 s auf Tempo 300, dreht in einer Sekunde um 180°
-  (Wendekreis ≈ 85 Einheiten, passt also in eine vierspurige Straße) und steht aus 300
-  nach 43 Einheiten. Die Handbremse bricht das Heck aus – gut für 126° in 0,7 s.
-* **Waffen:** Du startest **ohne Waffe**, nur mit den Fäusten. Alles andere muss gefunden
-  werden – Pistole, Uzi, Schrotflinte und Raketenwerfer (mit Splash-Schaden und
-  explodierenden Autos) liegen in der Stadt, ebenso Health, Panzerung und Geld. Diese
-  festen Fundorte respawnen nach 22 Sekunden.
-* **Beute:** Wer stirbt, lässt liegen, was er getragen hat. Erledigte Spieler lassen ihre
-  Waffe mit der Restmunition und ein Viertel ihres Geldes fallen, gesprengte Streifenwagen
-  die Dienstwaffe des Cops, Passanten in etwa jedem dritten Fall ihre Brieftasche.
-  Solche Drops liegen 30–50 Sekunden auf der Straße, blinken mit einem gestrichelten Ring
-  und verschwinden nach dem Aufheben endgültig – sie respawnen nicht.
-* **Tasche:** Über den Button **TASCHE** (oder `I`) siehst du alles, was du dabei hast:
-  jede Waffe mit Munitionsstand (nicht besessene sind ausgegraut, leergeschossene als
-  „leer" markiert), Gesundheit, Panzerung, Geld und die zuletzt aufgesammelten Sachen.
-  Eine Zeile antippen wechselt direkt auf diese Waffe. Während die Tasche offen ist,
-  bewegt sich deine Figur nicht und schießt nicht – die Welt läuft aber weiter.
-* **Fahndungslevel:** Schüsse, überfahrene Passanten und erledigte Cops erhöhen die
-  Sterne (0–5). Ab einem Stern rücken Streifenwagen an, rammen, verfolgen und schießen.
-  Ohne neue Verbrechen kühlt der Level wieder ab.
-* **Aufträge:** Über die Stadt verteilt stehen 18 **Telefonzellen**. Zu Fuß hineinlaufen
-  nimmt einen Job an – drei Sorten, jeweils mit Zeitlimit, Zielmarkierung im Bild, Pfeil am
-  Bildrand samt Entfernung und Punkt auf der Minimap:
-  *Wagen abliefern* (irgendein Auto zum Treffpunkt bringen, $900),
-  *Kurierfahrt* (zwei Stationen nacheinander, $800) und
-  *Zielperson* (eine markierte Person ausschalten, $1200).
-  Wer schnell ist, bekommt Zeitbonus obendrauf; wer stirbt oder die Zeit reißt, verliert den
-  Auftrag. Jede Zelle hat danach 25 Sekunden Pause.
-* **Pay 'n' Spray:** Vier Lackierboxen am Straßenrand. Mit dem Auto langsam hineinfahren –
-  für $250 wird der Wagen repariert, neu lackiert und der **Fahndungslevel gelöscht**.
-  Der einzige Weg, fünf Sterne wieder loszuwerden, ohne zu sterben.
-* **Multiplayer:** Alle Spieler teilen sich dieselbe Stadt, sehen gegenseitig Autos,
-  Schüsse und Explosionen. Kills, Tode, Geld und Ping stehen in der Punktetabelle.
+**Oberfläche**
+- Telegram-Optik: Seitenleiste mit Chatliste, gemustertes Chat-Hintergrundbild,
+  grüne bzw. blaue eigene Sprechblasen, Infopanel rechts
+- Heller Modus und Nachtmodus (Telegram-„Night“-Palette), Wechsel im Menü
+- Vollständig responsiv: am Handy wird die Chatliste zur Vollbildansicht
+- PWA mit Service Worker, Icons und Offline-Hülle
+- Desktop-Benachrichtigungen mit Ton, ungelesene Anzahl im Seitentitel
 
-## Technik
+---
+
+## Aufbau
 
 ```
-server/index.js   HTTP-Static-Server + WebSocket-Server + Netzwerk-Loop
-shared/           Von Server UND Browser genutzte Module
-  world.js          Die Simulation (Spieler, Verkehr, Passanten, Polizei, Pickups) –
-                    im Multiplayer läuft sie auf dem Server, im Solo-Modus im Browser
-  constants.js      Tuning-Werte (Tempo, Schaden, Dichte, Netzraten)
-  city.js           Deterministischer Stadtgenerator (Seed -> identische Stadt)
-  physics.js        Bewegung, Kollision, Raycasts
-  util.js           Mathe + deterministischer PRNG
-public/           Client (ES-Module, keine Build-Tools nötig)
-  js/main.js        Multiplayer-Loop, Prediction, Interpolation
-  js/solo.js        Einzelspieler-Loop (dieselbe Welt, lokal simuliert)
-  js/net.js         WebSocket-Protokoll
-  js/input.js       Touch-Controls + Tastatur/Maus
-  js/controls.js    Steuerungsschemata (Modern / Original) inkl. Lenkassistent
-  js/render.js      Canvas-Renderer (Stadt, Fahrzeuge, Effekte, Minimap)
-  js/hud.js         HUD, Minimap, Killfeed, Touch-Buttons
-  js/audio.js       WebAudio-Synthesizer (Schüsse, Motor, Sirene – keine Sounddateien)
-  sw.js             Service Worker (PWA / Offline-Shell)
-  solo.html         Seite für den Einzelspieler-Modus
-scripts/make-icons.mjs   Erzeugt die PWA-Icons als PNG ohne Fremdbibliothek
-scripts/build-solo.mjs   Bündelt den Solo-Modus zu dist/liberty-solo.html (eine Datei)
+server/
+  index.js    HTTP-Server: statische Dateien, Medien, Range-Requests, Upgrade
+  ws.js       WebSocket-Server nach RFC 6455 (Handshake, Frames, Ping/Pong)
+  hub.js      Echtzeit: Präsenz, Zustellung, Tippen, Lesebestätigungen
+  api.js      REST-Endpunkte
+  model.js    Fachlogik: Chats, Nachrichten, Aufbereitung für den Client
+  auth.js     scrypt-Hashing, Sitzungen, Nummernnormalisierung
+  store.js    JSON-Persistenz mit gepufferten, atomaren Schreibvorgängen
+public/
+  index.html  Grundgerüst
+  css/app.css Gesamtes Design inklusive beider Themes
+  js/         app · api · state · socket · chat · chatlist · composer ·
+              dialogs · info · emoji · ui · util
+scripts/
+  seed.mjs        Demo-Konten und Beispielchats
+  make-icons.mjs  PWA-Icons als PNG, ohne Bildbibliothek
 ```
 
-**Netcode:** Der Server simuliert die Welt autoritativ mit 30 Hz und verschickt 15 Snapshots
-pro Sekunde, jeweils nur die Entitäten im Umkreis von 1250 Einheiten (~20–30 KB/s pro
-Spieler). Clients senden 30-mal pro Sekunde ihre Eingaben, sagen die eigene Bewegung mit
-derselben Physik lokal voraus (Client-Side Prediction mit weicher Korrektur) und
-interpolieren alle anderen Objekte mit 110 ms Puffer – dadurch bleibt die Steuerung auch
-bei Latenz direkt und die Bewegung anderer Spieler flüssig.
+Daten liegen in `data/db.json`, Uploads in `data/uploads/`. Beides ist über
+`.gitignore` ausgenommen; zum Zurücksetzen einfach den Ordner `data/` löschen.
 
-**Kamera:** Zu Fuß zoomt die Kamera näher heran (ca. 12,5 Kacheln Höhe), damit die Figuren
-mit Hut, Armen und Beinen zu erkennen sind; im Auto zieht sie auf ca. 16,5 Kacheln auf und
-mit steigendem Tempo zusätzlich zurück, damit bei Höchstgeschwindigkeit genug Vorausschau
-bleibt.
+### Warum ohne Abhängigkeiten?
 
-**Warum kein Bild-Asset?** Stadt, Autos, Figuren und Effekte werden zur Laufzeit gezeichnet.
-Das Spiel ist damit wenige hundert Kilobyte groß, startet sofort und skaliert scharf auf
-jedes Display (inkl. Retina, DPR bis 2).
+`npm install` entfällt komplett — die App startet auf jedem Rechner mit Node 18+
+sofort. Der WebSocket-Server (`server/ws.js`) implementiert den Handshake und
+das Frame-Format selbst; Passwörter nutzen `node:crypto`, die Persistenz das
+Dateisystem.
 
-## Konfiguration
+---
 
-| Variable | Bedeutung | Default |
-|---|---|---|
-| `PORT` | HTTP/WebSocket-Port | `3000` |
-| `SEED` | Fester Stadt-Seed (sonst zufällig pro Start) | zufällig |
-| `MAX_PLAYERS` | Maximale gleichzeitige Spieler | `32` |
+## Schnittstellen
 
-Beispiel: `PORT=8080 SEED=1337 npm start`
+### REST (`Authorization: Bearer <token>`)
 
-Spielbalance (Tempo, Schaden, Verkehrsdichte, Anzahl Passanten, Fahndungslogik) steht
-gesammelt in `shared/constants.js`.
+| Methode  | Pfad                        | Zweck                                  |
+|----------|-----------------------------|----------------------------------------|
+| `POST`   | `/api/auth/register`        | Konto anlegen                          |
+| `POST`   | `/api/auth/login`           | Anmelden                               |
+| `POST`   | `/api/auth/logout`          | Sitzung beenden                        |
+| `GET`    | `/api/me`                   | Eigenes Profil und bekannte Nutzer     |
+| `PATCH`  | `/api/me`                   | Name, Info, Profilbild ändern          |
+| `POST`   | `/api/me/password`          | Passwort wechseln                      |
+| `GET`    | `/api/chats`                | Chatliste                              |
+| `POST`   | `/api/chats`                | Einzelchat oder Gruppe anlegen         |
+| `PATCH`  | `/api/chats/:id`            | Anheften, Stumm, Archiv, Titel, Mitglieder |
+| `DELETE` | `/api/chats/:id`            | Chat löschen bzw. Gruppe verlassen     |
+| `GET`    | `/api/chats/:id/messages`   | Verlauf (`before`, `limit`)            |
+| `GET`    | `/api/users/search?q=`      | Nutzersuche                            |
+| `GET`    | `/api/contacts`             | Adressbuch                             |
+| `POST`   | `/api/contacts`             | Kontakt speichern                      |
+| `DELETE` | `/api/contacts/:userId`     | Kontakt entfernen                      |
+| `GET`    | `/api/search?q=`            | Nachrichtensuche                       |
+| `POST`   | `/api/upload`               | Datei hochladen (Rohdaten im Rumpf)    |
 
-## Deployment
+### WebSocket `/ws?token=…`
 
-Der Server ist ein einzelner Node-Prozess ohne Build-Schritt und ohne Datenbank:
+Client → Server: `message:send`, `message:edit`, `message:delete`,
+`message:react`, `typing`, `read`, `draft`, `ping`
 
-```bash
-npm ci --omit=dev
-PORT=8080 node server/index.js
-```
+Server → Client: `ready`, `message`, `message:update`, `chat`, `chat:removed`,
+`user`, `presence`, `typing`, `read`, `read:self`, `delivered`, `error`, `pong`
 
-Er funktioniert auf jedem Node-Hoster (Fly.io, Railway, Render, VPS, Docker). Wichtig ist
-nur, dass der Reverse Proxy **WebSocket-Upgrades durchlässt** (bei nginx:
-`proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
-Der Health-Endpoint `GET /health` liefert Spielerzahl und Uptime.
+---
+
+## Bekannte Grenzen
+
+Das Projekt ist als vollständig nutzbarer Messenger gebaut, aber nicht als
+gehärteter Produktionsdienst:
+
+- **Keine Ende-zu-Ende-Verschlüsselung.** Nachrichten liegen im Klartext in
+  `data/db.json`. Für den Betrieb im Netz gehört ein TLS-Terminator (z. B.
+  nginx oder Caddy) davor.
+- **Hochgeladene Dateien sind über ihre URL ohne Anmeldung abrufbar.** Die
+  Namen sind zufällig, aber nicht geheim.
+- **Keine Telefonnummern-Verifikation per SMS** — die Nummer ist Benutzername,
+  nicht mehr.
+- **JSON-Datei statt Datenbank.** Für einige tausend Nachrichten völlig
+  ausreichend, für den Massenbetrieb wäre SQLite oder Postgres der nächste
+  Schritt.
+- Ein einzelner Serverprozess; horizontal skaliert wird nicht.
+
+---
 
 ## Entwicklung
 
 ```bash
-npm run dev         # Node --watch, startet den Server bei Änderungen neu
-npm run build:solo  # baut dist/liberty-solo.html neu
-npm run icons       # erzeugt die PWA-Icons neu
+npm run dev     # Server mit --watch neu starten
+npm run seed    # Demodaten (nur bei leerer Datenbank)
+npm run icons   # PWA-Icons neu erzeugen
 ```
-
-Der Client hat keinen Build-Schritt: Dateien in `public/` bearbeiten und neu laden.
-Wenn der Service Worker eine alte Version ausliefert, in den Safari-/Chrome-DevTools
-„Update on reload“ aktivieren oder die Version in `public/sw.js` (`CACHE`) hochzählen.
-
-## Rechtliches
-
-Eigenständige Neuimplementierung eines Spielprinzips zu Lern- und Demozwecken.
-Es werden keine Grafiken, Sounds, Karten oder sonstige Inhalte des Originals verwendet.
-„Grand Theft Auto“ ist eine Marke von Take-Two Interactive / Rockstar Games; dieses
-Projekt steht in keiner Verbindung dazu.
